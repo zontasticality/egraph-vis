@@ -7,60 +7,37 @@
 </script>
 
 <div class="state-pane">
-	<div class="pane-header">
-		<h2>State Pane</h2>
-	</div>
-	<div class="scrollable-content">
-		<!-- Hashcons Section -->
-		<h3 class="section-title">Hashcons</h3>
-		<section class="state-section">
-			<HashconsView />
-		</section>
+	<!-- Hashcons Section -->
+	<h3 class="section-title">Hashcons</h3>
+	<section class="state-section">
+		<HashconsView />
+	</section>
 
-		<!-- E-class Map Section -->
-		<h3 class="section-title">E-class Map</h3>
-		<section class="state-section">
-			<EClassMapView />
-		</section>
+	<!-- E-class Map Section -->
+	<h3 class="section-title">E-class Map</h3>
+	<section class="state-section">
+		<EClassMapView />
+	</section>
 
-		<!-- Union-Find Section -->
-		<h3 class="section-title">Union-Find</h3>
-		<section class="state-section">
-			<UnionFindView />
-		</section>
+	<!-- Union-Find Section -->
+	<h3 class="section-title">Union-Find</h3>
+	<section class="state-section">
+		<UnionFindView />
+	</section>
 
-		<!-- Worklist Section -->
-		<h3 class="section-title">Worklist</h3>
-		<section class="state-section">
-			<WorklistView />
-		</section>
-	</div>
+	<!-- Worklist Section -->
+	<h3 class="section-title">Worklist</h3>
+	<section class="state-section">
+		<WorklistView />
+	</section>
 </div>
 
 <style>
 	.state-pane {
 		height: 100%;
-		display: flex;
-		flex-direction: column;
-		background-color: #f5f5f5;
-	}
-
-	.pane-header {
-		padding: 0.9rem;
-		border-bottom: 1px solid #e0e0e0;
-		background-color: #fff;
-	}
-
-	.pane-header h2 {
-		margin: 0;
-		font-size: 0.9rem;
-		font-weight: 600;
-	}
-
-	.scrollable-content {
-		flex: 1;
 		overflow-y: auto;
 		padding: 1rem;
+		background-color: #f5f5f5;
 	}
 
 	.state-section {
