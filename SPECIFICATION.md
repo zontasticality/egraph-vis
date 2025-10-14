@@ -81,6 +81,8 @@ Operations:
 
 **Note on Deferred Rebuilding**: The key innovation of egg is that invariants are NOT maintained after every `add` or `merge`. Instead, they are restored by calling `rebuild()` at strategic points (e.g., between read and write phases in equality saturation).
 
+## Multi-Pane Views
+
 ### Graph Pane
 
 A self-organizing graph of e-classes each containing e-nodes with arrows pointing
