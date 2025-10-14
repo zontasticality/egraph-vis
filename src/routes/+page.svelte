@@ -20,7 +20,7 @@
 	</header>
 
 	<div class="panes-container">
-		<PaneGroup direction="horizontal">
+		<PaneGroup direction="horizontal" autoSaveId="egraph-vis-layout">
 			<!-- Graph Pane (left side) -->
 			<Pane defaultSize={60} minSize={30}>
 				<GraphPane />
