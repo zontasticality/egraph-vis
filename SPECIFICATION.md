@@ -13,12 +13,31 @@ This is a animated interactive visualization built using Svelte 5 of the paper [
 
 ### Data model
 
- - NodeID
-   - `op: string` op name
-   - `args: number[]` list of arguments of node-ids
- - 
+The following is a data model for the program, developed from the egg paper's data model as well as taking into account potential extra data for interactive visualization.
 
- - Hashcons - JS object mapping numbers to 
+*Note: the egg paper uses the term e-class-id to refer to the canonical node-id, we just use 'canonical e-node-id` here*.
+
+ - e-node-id (`type ENodeId = number`): Opaque identifier
+   - A canonical e-node-id is one where `find(id) === id` (at the top of union-find)
+
+ - e-node (`type ENode`): A function symbol with e-node-id children
+   - `op: string` - operation/function symbol (e.g., '+', '*', 'a', '2')
+   - `args: number[]` - array of e-node-ids that are arguments. empty if leaf/constant.
+
+ - e-class (`type EClass = ENode[]`): List of e-nodes.
+
+ - Union-Find (`UnionFind<ENodeID>`): Array-based union-find data structure - Use https://www.npmjs.com/package/union-find
+   - Provides `find`, and merge (`link`)
+
+ - E-class Map (`Map<ENodeID, EClass>`): Maps canonical e-node-ids to their e-classes.
+   - `Map` provides `get(node-id: ENodeID) -> EClass`
+
+ - Hashcons (`Map<string, number>`): Fast lookup from json of canonical e-node to its canonical e-node-id.
+   - Implement: `add(ENode) -> number`
+     - Json stringifies ENode, if not exist, add stringified version to map, otherwise return existing e-node-id.
+
+Operations:
+ - ...
 
 ### Graph Pane
 
