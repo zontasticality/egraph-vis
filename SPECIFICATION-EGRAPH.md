@@ -1,6 +1,6 @@
 # E-graph Implementation Specification
 
-This document specifies the e-graph implementations for equality saturation based on the [egg paper](https://arxiv.org/abs/2004.03082). The implementation provides two variants of e-graphs with different rebuilding strategies, along with supporting data structures and test requirements.
+This document specifies the e-graph implementations for equality saturation based on the [egg paper](https://arxiv.org/abs/2004.03082). The implementation provides two variants of e-graphs with different rebuilding strategies, along with supporting data structures and test requirements. The purpose of this implementation is to enable the easy visualization of the process behind the two different algorithms via Svelte.
 
 ## Overview
 
@@ -9,7 +9,7 @@ The system implements e-graphs (equivalence graphs), a data structure for effici
 1. **Naive E-graph**: Maintains all invariants immediately after every operation
 2. **Deferred E-graph**: Defers invariant maintenance until an explicit rebuild operation
 
-Both implementations must maintain identical semantics while differing in performance characteristics.
+Both implementations must maintain identical semantics while differing in performance characteristics and hook-ins to track the progress of the algorithm visually.
 
 ---
 
@@ -264,131 +264,6 @@ The system should support basic pattern matching for equality saturation:
   4. Repeat until no matches found in read phase
 - Limit iterations to prevent infinite loops
 
----
-
-## Testing Requirements
-
-### Unit Tests
-
-**Union-Find Tests** (minimum 15 tests):
-- Singleton creation
-- Find on singleton returns itself
-- Union merges correctly
-- Path compression working
-- Union by rank maintains balance
-- Equivalence checking
-- Multiple sequential unions
-- Error handling for invalid IDs
-
-**Naive E-graph Tests** (minimum 15 tests):
-- Add constant nodes
-- Add nodes with children
-- Hashcons deduplication
-- Parent pointer updates
-- Simple merge
-- Congruence on merge (f(a), f(b) merged when a, b merged)
-- Nested congruence (f(g(a)), f(g(b)) merged when a, b merged)
-- Self-merge is no-op
-- Invariants always valid
-- Worklist always empty
-- Rebuild is no-op
-
-**Deferred E-graph Tests** (minimum 15 tests):
-- Add operations identical to naive
-- Merge adds to worklist
-- Invariants broken after merge
-- Rebuild restores invariants
-- Congruence restored after rebuild
-- Multiple merges then single rebuild
-- Self-merge is no-op
-- Worklist empty after rebuild
-- Hashcons updated during rebuild
-- Parent e-nodes merged by congruence
-
-**History Tracking Tests** (minimum 10 tests):
-- Events recorded for add
-- Events recorded for merge
-- Events recorded for rebuild
-- Event count increments
-- Latest event accessible
-- Timeline grouping (adds, merges, rebuilds)
-- Snapshots captured when configured
-- Snapshots contain full state
-- JSON export succeeds
-
-### Integration Tests
-
-**Comparison Tests** (minimum 10 tests):
-- Same operations on naive and deferred produce equivalent final states
-- Same number of e-classes after rebuild
-- Same congruence relationships
-- Both maintain invariants at checkpoints
-- Hashcons equivalent after rebuild
-
-**Pattern Matching Tests** (minimum 5 tests):
-- Variable patterns match all e-nodes
-- Operator patterns match e-nodes with that operator
-- Patterns with children match correctly
-- E-matching finds all matches in e-graph
-- Substitution consistency (same variable binds to same value)
-
-**Rewrite Tests** (minimum 5 tests):
-- Simple rewrite (0+x → x) applies correctly
-- Rewrite result merged with matched e-class
-- Multiple rewrites in single iteration
-- Rewrites trigger congruence closure
-- Manual multi-step rewriting simplifies expressions
-
-**Equality Saturation Tests** (minimum 3 tests):
-- Saturation terminates (no infinite loops)
-- Algebraic identities simplified (a*1 → a, a+0 → a)
-- Example from egg paper: (a×2)/2 optimization
-
-**Performance Tests** (minimum 2 tests):
-- Measure naive vs deferred on batch operations (50+ nodes)
-- Deferred should be asymptotically faster
-- Verify both produce correct results
-- Report speedup factor
-
-### Test Coverage Target
-
-- Minimum 90 total tests across all suites
-- All core operations tested in both implementations
-- Edge cases: empty e-graph, self-merge, single node, large graphs
-- Correctness: invariants checked after every operation or rebuild
-- Performance: comparative benchmarks demonstrating deferred advantage
-
----
-
-## Performance Specifications
-
-### Complexity Requirements
-
-| Operation | Naive | Deferred |
-|-----------|-------|----------|
-| find | O(α(n)) | O(α(n)) |
-| add | O(1) amortized | O(1) amortized |
-| merge | O(n×α(n)) worst | O(1) + worklist |
-| rebuild | N/A | O(n×α(n)) total |
-
-Where n = number of e-classes, α(n) = inverse Ackermann (≤ 5 for practical n).
-
-### Performance Goals
-
-**Batch Operations**:
-- Deferred should be 3-10x faster than naive for sequences of many merges followed by single rebuild
-- Measured on workload: Create n nodes with parents, merge all nodes
-
-**Saturation**:
-- Equality saturation with k rewrites over n nodes should complete in O(k×n×α(n)) per iteration
-- Deferred rebuild should be faster than naive's O(k×n²×α(n)) cascading merges
-
-**Memory**:
-- E-graph size should be O(n) where n = number of distinct e-nodes
-- Hashcons provides deduplication to prevent exponential blowup
-
----
-
 ## Error Handling
 
 **Invalid Operations**:
@@ -402,6 +277,8 @@ Where n = number of e-classes, α(n) = inverse Ackermann (≤ 5 for practical n)
 - Debug mode with verbose violation reporting
 
 ---
+
+NOTE: I think the implementation notes should be integrated into the documentation above.
 
 ## Implementation Notes
 
@@ -429,36 +306,3 @@ Where n = number of e-classes, α(n) = inverse Ackermann (≤ 5 for practical n)
 - Test equivalence between implementations in integration tests
 - Use small, manually verifiable examples in tests
 - Use larger random graphs for performance tests
-
----
-
-## References
-
-1. **egg paper**: Willsey, M., et al. (2021). "egg: Fast and Extensible Equality Saturation."
-   https://arxiv.org/abs/2004.03082
-
-2. **Nelson (1980)**: "Fast Decision Procedures Based on Congruence Closure"
-   Original e-graph design with immediate congruence closure
-
-3. **Tarjan (1975)**: "Efficiency of a Good But Not Linear Set Union Algorithm"
-   Union-find with path compression and union by rank
-
-4. **Detlefs et al. (2005)**: "Simplify: A Theorem Prover for Program Checking"
-   Modern e-graph implementation techniques
-
----
-
-## Acceptance Criteria
-
-The implementation is complete when:
-
-✅ All 90+ tests pass
-✅ Both naive and deferred implementations maintain all three invariants
-✅ Integration tests confirm equivalence between implementations
-✅ Performance tests show deferred speedup on batch operations
-✅ Pattern matching and basic rewrites functional
-✅ Equality saturation terminates and produces correct results
-✅ Reactive updates work with Svelte 5 runes
-✅ History tracking (if implemented) records all operations
-✅ Code is type-safe (TypeScript with no any types)
-✅ Documentation covers all public APIs
