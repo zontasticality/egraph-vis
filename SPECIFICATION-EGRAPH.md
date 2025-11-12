@@ -20,6 +20,11 @@ Both implementations must maintain identical semantics while differing in perfor
 **E-node ID** (`ENodeId`):
 - Opaque numeric identifier for e-nodes
 - A canonical e-node ID is one where `find(id) = id`
+- **Terminology note**: We use "canonical e-node ID" to refer to the representative of an e-class, rather than "e-class ID". This is clearer because:
+  - Every e-node has an ID (whether canonical or not)
+  - Multiple e-node IDs can point to the same e-class via union-find
+  - The canonical ID of an e-class may change during union operations
+  - An e-class is accessed via its canonical e-node ID in the e-class map
 
 **E-node** (`ENode`):
 - Represents a function application with children
@@ -61,10 +66,7 @@ An e-graph consists of four core data structures:
 - Value: Complete e-class structure
 
 **Hashcons** (Hash Consing Table):
-- Maps canonical e-nodes (as strings) to their canonical e-class IDs
-
-NOTE: Should we really be using the term 'e-class id' as opposed to 'canonical e-node id'? There is a unique e-class id for each *e-node* but multiple e-class ids can refer to a single e-class (and in fact the e-class id that actually refers to the e-class may change over time)
-
+- Maps canonical e-nodes (as strings) to their canonical e-node IDs
 - Enables deduplication: checking if an e-node already exists
 - **Critical requirement**: E-nodes must be canonicalized before hashing
 - Canonicalization process:
