@@ -16,6 +16,7 @@ Anything unrelated to those goals (pane layout, timeline stores, etc.) lives out
 3. **Stable identifiers** – `ENodeId`s increment monotonically; canonical ids may change after merges but are always discoverable through `find()`.
 4. **Implementation parity** – Naive and deferred modes must be feature-complete and produce the same observable results (states, diffs, invariant reports).
 5. **Preset-driven** – Inputs (initial expression, rewrites) arrive via a schema defined in `PRESETS.md`; no implicit global rewrites.
+6. **Mutative snapshots** – Snapshot emission must use [mutative](https://github.com/unadlib/mutative) (Immer-compatible) `produce` calls so exported objects remain plain JS arrays/maps with structural sharing.
 
 ## 3. Public API Surface
 ```ts
@@ -33,7 +34,11 @@ interface EngineOptions {
   debugInvariants?: boolean;
 }
 ```
-- `EGraphState`, `EGraphTimeline`, and `PresetConfig` are described in the sibling files listed below.
+- `PresetConfig` (see `PRESETS.md`) encodes the initial expression, rewrite list, and preset-specific hints/limits. `loadPreset` must validate it eagerly and reset internal runtime state.
+- `EGraphState` (see `DATA_MODEL.md`) is the immutable snapshot emitted after each phase. It contains flattened union-find/e-class/hashcons data plus metadata diffs and invariant flags.
+- `EGraphTimeline` (see `DATA_MODEL.md`) is a deterministic sequence of `EGraphState`s along with preset/implementation identifiers. `runUntilHalt` builds a new one; `getTimeline` returns the last computed timeline without mutation.
+- `step()` advances the engine by exactly one phase (read, write, or rebuild depending on implementation). It returns the new `EGraphState`, or `null` once saturation halts.
+- `getTimeline()` must never mutate or clone partial data; consumers rely on structural sharing between states for fast scrubbing.
 - Engines must throw descriptive errors (`PresetValidationError`, `IterationCapExceededError`, etc.) rather than returning partial data.
 
 ## 4. Document Map

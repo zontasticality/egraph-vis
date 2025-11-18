@@ -75,9 +75,21 @@ interface StepMetadata {
 }
 ```
 
-Snapshots are produced via structural sharing (mutative/Immer). Engine authors must ensure that arrays/objects that do not change reuse references from prior states so scrubbing can compare by reference.
+Snapshots are produced via structural sharing using mutative’s `produce`. Engine authors must ensure that arrays/objects that do not change reuse references from prior states so scrubbing can compare by reference.
 
-## 4. Graph Topology Payload
+## 4. Timeline Container
+The engine exposes precomputed histories via `EGraphTimeline`:
+```ts
+interface EGraphTimeline {
+  presetId: string;
+  implementation: 'naive' | 'deferred';
+  states: EGraphState[];
+  haltedReason: 'saturated' | 'iteration-cap' | 'canceled';
+}
+```
+`states` must be in chronological order. `haltedReason` communicates why the loop stopped so controllers can surface the status.
+
+## 5. Graph Topology Payload
 UI consumers expect derived graph data. Engine must include in `metadata` or a dedicated field:
 ```ts
 interface GraphPayload {
@@ -87,7 +99,7 @@ interface GraphPayload {
 ```
 Graph payload is recomputed from runtime parents/children during snapshot emission; never leak internal Maps.
 
-## 5. Deterministic Ordering Rules
+## 6. Deterministic Ordering Rules
 - Sort `unionFind`, `eclasses`, and `hashcons` arrays by canonical id / lexical key before emitting.
 - Within an `EClassViewModel`, sort nodes alphabetically by `op` then lexicographically by args.
 - Worklist array sorted ascending.
