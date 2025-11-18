@@ -42,7 +42,7 @@ interface Timeline {
 
 ### Responsibilities
 1. Initialize `EGraphRuntime` from preset expression(s).
-2. Execute equality saturation loop (see `SPEC-ENGINE.md`).
+2. Execute equality saturation loop (see `specs/egraph/OPERATIONS.md`).
 3. After every top-level action (initializing root nodes, read phase, write phase, rebuild), call `emitSnapshot()` which:
    - Uses mutative `produce(previousState, draft => …)` to capture the runtime into an immutable structure.
    - Annotates `draft.metadata.phase`, `draft.metadata.timestamp`, etc.
@@ -122,5 +122,5 @@ Selections are stored in `timelineStore` metadata as `{ type: 'enode' | 'eclass'
 ## 10. File Placement
 - Engine lives in `src/lib/engine/`.
 - Timeline + controller stores in `src/lib/stores/`.
-- Preset definitions reside in `static/presets/*.json` (see `SPEC-PRESETS.md`).
+- Preset definitions reside in `static/presets/*.json` (see `specs/egraph/PRESETS.md`).
 - Shared TypeScript interfaces go in `src/lib/types.ts` and are imported across specs to prevent drift.

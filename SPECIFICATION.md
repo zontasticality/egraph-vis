@@ -7,10 +7,9 @@ This repo now splits the specification into focused documents so each concern ca
 | Spec | Purpose |
 | --- | --- |
 | [SPEC-ARCHITECTURE.md](./SPEC-ARCHITECTURE.md) | Application state flow, controller & playback model, immutable timeline pipeline. |
-| [SPEC-ENGINE.md](./SPEC-ENGINE.md) | E-graph data structures, operations, rewrite system, instrumentation hooks. |
 | [SPEC-UI.md](./SPEC-UI.md) | Pane layouts, interaction details, animation & highlighting rules. |
-| [SPEC-TESTING.md](./SPEC-TESTING.md) | Required regression fixtures and contract tests for engine ↔ UI parity. |
-| [SPEC-PRESETS.md](./SPEC-PRESETS.md) | Schema for preset expressions, rewrite sets, and visualization metadata. |
+| [SPEC-TESTING.md](./SPEC-TESTING.md) | App-level regression coverage (stores, panes, integration). |
+| [specs/egraph/MAIN.md](./specs/egraph/MAIN.md) | Canonical e-graph specification suite (data model, operations, rewrites, presets, engine tests). |
 
 ## Core Experience
 

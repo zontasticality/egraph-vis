@@ -55,9 +55,9 @@ Scrollable column containing the following sections. Each section receives `stat
 - Buttons disabled states tie directly to `controllerStore` computed flags.
 
 ## 5. Preset Selector
-- Dropdown listing presets from `/static/presets/index.json` (see `SPEC-PRESETS.md`). Each option shows expression label + number of rewrites.
+- Dropdown listing presets from `/static/presets/index.json` (see `specs/egraph/PRESETS.md`). Each option shows expression label + number of rewrites.
 - When selection changes, display loading skeletons until new timeline is ready.
-- Offer “Customize” button that opens a modal (future work) where users can edit rewrites; spec placeholder references `SPEC-PRESETS.md` schema.
+- Offer “Customize” button that opens a modal (future work) where users can edit rewrites; spec placeholder references `specs/egraph/PRESETS.md` schema.
 
 ## 6. Accessibility & Theming
 - Provide high-contrast theme toggle (light/dark). Colors defined via CSS variables.
@@ -79,4 +79,4 @@ src/lib/components/
 ```
 Each section component exports props for `state`, `previous`, `selection`, and emits `selectionChange` events bubbling up to a shared handler in `StatePane`.
 
-This document works in tandem with `SPEC-ARCHITECTURE.md` (data flow) and `SPEC-ENGINE.md` (what gets visualized).
+This document works in tandem with `SPEC-ARCHITECTURE.md` (data flow) and the e-graph specs under `specs/egraph/` (what gets visualized).

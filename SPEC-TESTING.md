@@ -24,7 +24,7 @@ Ensures the engine, timeline, and UI stay in sync as the project evolves.
    - `metadata.diffs` must only reference ids present in the same snapshot.
    - Structural sharing sanity: verifying `states[i] !== states[i-1]` but `states[i].graph.nodes[j] === states[i-1].graph.nodes[j]` whenever unchanged.
 4. **Controller Logic**: Simulate playback store operations to ensure actions respect boundaries and that scrubbing yields deterministic indices.
-5. **Preset Schema**: Validate every preset JSON using the schema from `SPEC-PRESETS.md`; unit tests fail if schema changes without fixture updates.
+5. **Preset Schema**: Validate every preset JSON using the schema from `specs/egraph/PRESETS.md`; unit tests fail if schema changes without fixture updates.
 6. **UI Rendering**: Using Vitest DOM, render each pane with fixture snapshots to ensure empty/populated states match the spec (e.g., Worklist view shows “invariants restored” when empty).
 
 ## 4. Tooling & Commands
@@ -40,4 +40,4 @@ Ensures the engine, timeline, and UI stay in sync as the project evolves.
 ## 6. Debug Utilities
 Expose `pnpm debug:timeline --preset <id> --impl deferred` that prints step-by-step metadata to aid regressions. This command should reuse the same code paths as the app to prevent drift.
 
-Keeping these requirements synchronized with `SPEC-ENGINE.md` and `SPEC-ARCHITECTURE.md` ensures contributors know when they’re breaking guarantees.
+Keeping these requirements synchronized with `specs/egraph/` and `SPEC-ARCHITECTURE.md` ensures contributors know when they’re breaking guarantees.
