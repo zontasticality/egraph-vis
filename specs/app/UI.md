@@ -79,4 +79,4 @@ src/lib/components/
 ```
 Each section component exports props for `state`, `previous`, `selection`, and emits `selectionChange` events bubbling up to a shared handler in `StatePane`.
 
-This document works in tandem with `SPEC-ARCHITECTURE.md` (data flow) and the e-graph specs under `specs/egraph/` (what gets visualized).
+This document works in tandem with `./ARCHITECTURE.md` (data flow) and the e-graph specs under `specs/egraph/` (what gets visualized).

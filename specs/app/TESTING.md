@@ -40,4 +40,4 @@ Ensures the engine, timeline, and UI stay in sync as the project evolves.
 ## 6. Debug Utilities
 Expose `pnpm debug:timeline --preset <id> --impl deferred` that prints step-by-step metadata to aid regressions. This command should reuse the same code paths as the app to prevent drift.
 
-Keeping these requirements synchronized with `specs/egraph/` and `SPEC-ARCHITECTURE.md` ensures contributors know when they’re breaking guarantees.
+Keeping these requirements synchronized with `specs/egraph/` and `./ARCHITECTURE.md` ensures contributors know when they’re breaking guarantees.

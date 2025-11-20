@@ -39,6 +39,7 @@ interface Timeline {
   violations: ViolationSummary[];  // aggregated invariant info per state
 }
 ```
+`phaseMarkers` and `violations` are derived by the TimelineEngine by scanning the `states` array (e.g., record indices where `state.phase` changes, summarize `state.metadata.invariants`). The e-graph engine does not need to supply them directly.
 
 ### Responsibilities
 1. Initialize `EGraphRuntime` from preset expression(s).
