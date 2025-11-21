@@ -22,8 +22,9 @@ interface RewriteRule {
 
 ## 3. Applying Rewrites
 - For each match, instantiate `rhs` by replacing pattern vars with canonical ids from the substitution, producing a concrete `ENode`.
-- Call `addEnode` and merge with the target e-class.
-- Record metadata diff referencing `rule.name` for UI display.
+- Call `addEnode` to get the id of the new node.
+- Call `merge(targetClass, newId)`.
+- **Deduplication**: If `addEnode` returned an existing id AND `merge` resulted in no change (winner was already the representative of both), then this rewrite was redundant. Do **not** record a diff or emit a snapshot for purely redundant rewrites.
 - In deferred mode, newly merged classes must be added to the worklist.
 
 ## 4. Equality-Saturation Loop
@@ -36,7 +37,7 @@ while (iteration < iterationCap) {
   applyMatches(matches);
   if impl === 'deferred': {
     emitSnapshot('rebuild');
-    rebuild();
+    rebuild(); // Internal loop until fixpoint
   } else {
     emitSnapshot('rebuild'); // noop but keeps parity
   }

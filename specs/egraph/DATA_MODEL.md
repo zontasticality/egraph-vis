@@ -12,7 +12,7 @@ Used only inside the engine while computing a step. Implementations may choose a
 
 | Structure | Purpose | Notes |
 | --- | --- | --- |
-| `UnionFind<ENodeId>` | Track equivalence classes. | Must support path compression + union by rank. |
+| `UnionFind<ENodeId>` | Track equivalence classes. | Must support path compression. Union strategy: **Smaller ID Wins** (for visual stability). |
 | `Map<ENodeId, EClassRuntime>` | Canonical id → mutable class contents. | Only canonical ids appear as keys. |
 | `Map<string, ENodeId>` (hashcons) | Deduplicate canonicalized e-nodes. | Keys derived from `canonicalKey(enode)`. |
 | `Set<ENodeId>` (worklist) | Deferred repair queue. | Empty in naive implementation. |
