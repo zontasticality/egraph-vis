@@ -165,7 +165,7 @@ function matchPattern(
 
         for (let i = 0; i < pattern.args.length; i++) {
             const patArg = pattern.args[i];
-            const nodeArgId = enode.args[i];
+            const nodeArgId = runtime.find(enode.args[i]); // Canonicalize!
 
             // Recursive match?
             // If patArg is simple (string/number), we check it.
@@ -249,6 +249,11 @@ export function applyMatches(
 
         // Perform merge
         runtime.merge(target, actualNewId);
+
+        // In naive mode, we restore invariants immediately after every merge
+        if (impl === 'naive') {
+            rebuild(runtime);
+        }
 
         // Record diff
         // Note: runtime.merge records a 'merge' diff.
