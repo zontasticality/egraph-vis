@@ -10,8 +10,10 @@ Describes how snapshots from the timeline are rendered. All components consume i
 ## 2. Graph Pane (`GraphPane.svelte`)
 - Backed by Svelte Flow (`@xyflow/svelte`).
 - Layout requirements:
-  - Use ELK (ELK layout plugin) in layered mode to keep parents above children.
-  - Node: represents an e-class. Display canonical id badge + inline list of node ops. Color seed = canonical id.
+  - **Algorithm**: `elk.layered` with `elk.direction: 'DOWN'`.
+  - **Stability**: Use `elk.layered.crossingMinimization.strategy: 'INTERACTIVE'` to minimize node jumping between updates.
+  - **Sync**: When ELK returns new positions, animate Svelte Flow nodes to them. *Note: User dragging should be disabled or strictly temporary (snaps back on next step) to maintain layout consistency.*
+  - Node: represents an e-class. Display canonical id badge + inline list of node ops. Color seed = canonical id (mapped to a fixed accessible palette).
   - Edge: from parent e-class to child canonical id. Label with the argument index.
 - Animation:
   - When `metadata.diffs` contains merges, fade out losing nodes and pulse the winner.
@@ -22,29 +24,70 @@ Describes how snapshots from the timeline are rendered. All components consume i
   - If selection matches, outline the node in accent color.
 
 ## 3. State Pane
-Scrollable column containing the following sections. Each section receives `state`, `selection`, and `prevState` to compute highlights.
+The State Pane (right side) contains scrollable sections visualizing the internal e-graph structures.
 
-### 3.1 Hashcons View
-- Render rows `canonicalKey → canonicalId`. Keys truncated to 32 chars with tooltip for full text.
-- Highlight rule: keys touched in the latest diff or containing the selected e-node (if selection type `enode`).
-- When clicking a row, update selection to `{ type: 'hashcons', key }` and scroll corresponding e-class into view.
+### 3.1 Visual Language
+To ensure consistency across views, we use the following component primitives:
 
-### 3.2 E-class Map View
-- Display cards sorted by canonical id.
-- Each e-node string uses format `op(arg1, arg2, …)` with child ids resolved through union-find to ensure canonical display.
-- Show metadata chips: `★` for canonical, `W` badge if e-class is currently in worklist.
-- Clicking an e-node selects `{ type: 'enode', id: childId }` and triggers cross-highlighting.
+- **E-Node ID (Diamond)**:
+  - **Shape**: Colored diamond containing the number.
+  - **Color**: Random hue seeded by the ID number (stable across renders).
+  - **Badge**: Yellow star in top-right if it is a *canonical* ID (representative).
+  
+- **E-Node (Symbol Box)**:
+  - **Shape**: Transparent box with rounded corners.
+  - **Content**: Operator symbol (e.g., `*`, `+`, `a`) followed by child E-Node IDs in parentheses (if any).
+  - **Style**:
+    - **Active/Normal**: Black text, white background.
+    - **Inactive/Ghost**: Dark grey stroke, light grey background (used for merged/stale nodes).
 
-### 3.3 Union-Find View
-- Visualize mapping table with canonical ids grouped. Non-canonical ids point to their representative via arrows (SVG or CSS arrows).
-- Active styling:
-  - `selected` id → accent background.
-  - Ids changed since previous state → pulse background once.
+- **E-Class (List Box)**:
+  - **Shape**: Transparent box with dotted border.
+  - **Content**: Inline list of E-Nodes belonging to this class.
+  - **Style**: Active (black border) vs Inactive (grey border).
 
-### 3.4 Worklist View
-- Shows queue order as chips. Top entry marked with “next”.
-- Empty state = green “invariants restored” message.
-- When playing, auto-scroll to keep highlighted worklist entries in view.
+### 3.2 Hashcons View
+- **Purpose**: Visualizes the deduplication map.
+- **Visuals**: List of `E-Node (Symbol Box) → E-Node ID (Diamond)` pairs.
+  - *Note*: This replaces the raw text key with the rendered symbol box for readability.
+- **Interaction**:
+  - **Hovering the Symbol Box**: Highlights the matching E-Node in the E-Class Map.
+  - **Hovering the ID**: Highlights the E-Class in the E-Class Map.
+  - **Clicking**: Selects the corresponding E-Class.
+
+### 3.3 E-Class Map View
+- **Purpose**: The primary view of the e-graph state.
+- **Layout**: Vertical list of E-Class cards, sorted by Canonical ID.
+- **Card Content**:
+  - **Header**: Canonical E-Node ID (Diamond with Star).
+  - **Body**: List of E-Nodes (Symbol Boxes) in this class.
+  - **Metadata**: Chips for "Worklist" status or analysis data.
+- **Component-Level Interaction**:
+  - **E-Node ID Component**:
+    - Hover: Highlights this ID in Union-Find and Hashcons views.
+    - Click: Selects `{ type: 'eclass', id }`.
+  - **E-Node Component**:
+    - Hover: Highlights child arguments (IDs) in the E-Class Map.
+    - Click: Selects `{ type: 'enode', id }` (the specific node instance).
+  - **E-Class Card**:
+    - Hover: Adds subtle border highlight.
+    - Click: Selects `{ type: 'eclass', id }`.
+
+### 3.4 Union-Find View
+- **Purpose**: Visualizes the equivalence tree.
+- **Layout**:
+  - Grouped by Canonical ID.
+  - Non-canonical IDs point to their representative with arrows.
+- **Visuals**:
+  - **Arrows**: Active (black) for current mappings, Inactive (grey) for history.
+  - **Pulse**: IDs that changed parent in the last step pulse briefly.
+
+### 3.5 Worklist View
+- **Purpose**: Shows the queue of E-Classes awaiting repair.
+- **Layout**: Chips/Tags representing E-Class IDs.
+- **Visuals**:
+  - **Red/Orange**: Items currently in the worklist.
+  - **Empty State**: "Invariants Restored" (Green).
 
 ## 4. Controller & Playback UI
 - Controller component renders: play/pause, step forward/back, jump-to-phase dropdown, rewind, FPS slider.
@@ -65,9 +108,43 @@ Scrollable column containing the following sections. Each section receives `stat
 - Prefer `aria-live` region for controller status (e.g., “Paused at step 4/87, phase Write”).
 
 ## 7. Performance Guidelines
-- Graph pane should virtualize nodes if count exceeds 250 (use `@xyflow/svelte` viewports + hidden classes).
+- **Graph Performance**:
+  - **Culling**: Use `IntersectionObserver` to hide nodes/edges outside the viewport if performance degrades.
+  - **Limit**: If node count > 500, show a warning and switch to a simplified "Cluster View" or stop auto-layout.
+  - **Virtualization**: Avoid complex virtualization for MVP; rely on Svelte Flow's optimized rendering.
 - State panes rely on snapshots; avoid recomputing heavy derived data by memoizing on `state.id`.
-- Animations should be CSS-based (transition/animation) to stay off the JS main thread during scrubbing.
+- State panes rely on snapshots; avoid recomputing heavy derived data by memoizing on `state.id`.
+
+## 8. Animation Strategy
+Svelte 5's FLIP animations (`animate:flip`) and transitions are powerful but must be managed carefully during timeline scrubbing.
+
+### 8.1 Playback vs. Scrubbing
+The `timelineStore` will expose a `transitionMode` flag:
+- **`'smooth'` (Play/Step)**:
+  - Use CSS transitions for color/opacity changes.
+  - Use FLIP for list reordering (e.g., E-Classes moving).
+  - Graph nodes interpolate positions.
+- **`'instant'` (Scrub/Jump)**:
+  - **Disable all transitions**.
+  - Immediate DOM updates to prevent visual "catch-up" lag.
+  - Essential for responsive scrubbing across large timelines.
+
+### 8.2 Implementation Details
+- **Graph Pane**:
+  - Svelte Flow nodes use a `transition: transform 0.3s` only when `transitionMode === 'smooth'`.
+  - When scrubbing, remove the transition class to snap instantly.
+- **State Pane**:
+### 8.3 Graph Interpolation (Optional/Advanced)
+To achieve "exact tweening" during scrubbing (where dragging the bar 50% between steps moves nodes 50% of the way):
+1.  **Controller**: Must expose a `scrubFraction` (float index, e.g., `4.5`).
+2.  **Graph Pane**:
+    -   On `scrubFraction` change, identify `floor(fraction)` (Start State) and `ceil(fraction)` (End State).
+    -   For each node ID present in both states:
+        -   Get `(x1, y1)` from Start and `(x2, y2)` from End.
+        -   Calculate `t = fraction % 1`.
+        -   Interpolate `x = x1 + (x2 - x1) * t`, `y = y1 + (y2 - y1) * t`.
+    -   Update Svelte Flow node positions directly (bypassing ELK for the intermediate frame).
+    -   *Note*: This requires the layout to be relatively stable (ELK Interactive mode) to look good. Nodes appearing/disappearing can fade in/out based on `t`.
 
 ## 8. File Structure
 ```

@@ -89,6 +89,7 @@ interface TimelineStoreState {
   timeline?: Timeline;
   index: number;                 // current frame
   current?: EGraphState;
+  transitionMode: 'smooth' | 'instant'; // controls animation behavior
   error?: string;
 }
 ```
@@ -113,7 +114,21 @@ Selections originate from:
 - Controller requests (e.g., highlight e-class touched by the last merge).
 - Direct user interaction inside panes (clicking a node/hyperedge).
 
-Selections are stored in `timelineStore` metadata as `{ type: 'enode' | 'eclass' | 'hashcons', id: number }[]`. Because the timeline snapshots are immutable, selection changes require cloning the metadata for the current index only (do **not** mutate snapshots from other steps). Use helper `withSelection(state, selection)` that returns a shallow clone referencing the same structural data.
+Selections are stored in a separate `interactionStore` (see below) to decouple ephemeral UI state from the immutable timeline. This allows:
+- **Synchronous Hovering**: Hovering a node in the graph instantly highlights the corresponding entry in the State Pane without triggering a timeline update.
+- **Persistent Selection**: Selection survives timeline scrubbing (if the ID exists in the new state).
+
+### `interactionStore`
+Svelte writable store for ephemeral UI state:
+```ts
+interface InteractionState {
+  selection: { type: 'enode' | 'eclass' | 'hashcons'; id: number | string } | null;
+  hover: { type: 'enode' | 'eclass' | 'hashcons'; id: number | string } | null;
+}
+```
+- **Selection**: Persists until user clicks away or selects something else.
+- **Hover**: Cleared on `mouseleave`.
+- **Components**: Subscribe to this store to apply "active" or "highlighted" styles.
 
 ## 9. Error & Loading UX
 - When `TimelineEngine` throws (preset invalid, rewrite divergence), set `status='error'` with user-facing copy plus debug info for developers (stack trace behind disclosure).
