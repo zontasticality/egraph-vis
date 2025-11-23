@@ -24,6 +24,7 @@ Shared visual primitives used across both Graph and State panes to ensure consis
 - **Style**:
   - **Active**: Black text, white background, solid border.
   - **Ghost**: Dark grey stroke, light grey background (used for merged/stale nodes in history or diffs).
+  - *Note*: Ghost nodes are non-interactive (no hover/click effects) to reduce noise.
 
 ### 2.3 E-Class (Cluster)
 - **Shape**: Box with dotted border.
@@ -62,7 +63,9 @@ Backed by Svelte Flow (`@xyflow/svelte`) and ELK Layout.
 Scrollable column visualizing internal structures.
 
 ### 5.1 Hashcons View
-- **Purpose**: Deduplication map (`canonicalKey -> canonicalId`).
+- **Purpose**: **Canonical Node Registry**. Maps unique node structures to their assigned E-Class IDs.
+- **Visuals**: List of `Canonical E-Node (Symbol Box) → E-Class ID (Diamond)` pairs.
+  - *Clarification*: This view confirms that identical nodes (e.g., `f(a)` and `f(a)`) map to the same ID.
 - **Visuals**: List of `Symbol Box → Diamond ID` pairs.
 - **Interaction**:
   - **Hover Symbol**: Highlights matching E-Node in E-Class Map.
@@ -89,6 +92,7 @@ Scrollable column visualizing internal structures.
 ### 5.4 Worklist View
 - **Purpose**: Repair queue.
 - **Visuals**: Chips/Tags for E-Class IDs. Red/Orange = Pending.
+- **Interaction**: Clicking a worklist chip highlights the corresponding E-Class in the Map.
 - **Empty State**: Green "Invariants Restored" message.
 
 ## 6. Controller & Playback
