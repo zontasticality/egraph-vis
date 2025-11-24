@@ -1,6 +1,15 @@
 <script lang="ts">
-    import { isPlaying, togglePlay, nextStep, prevStep, goToStep, currentIndex, timeline, progress } from '../stores/timelineStore';
-    
+    import {
+        isPlaying,
+        togglePlay,
+        nextStep,
+        prevStep,
+        goToStep,
+        currentIndex,
+        timeline,
+        progress,
+    } from "../stores/timelineStore";
+
     $: current = $currentIndex;
     $: total = $timeline ? $timeline.states.length : 0;
     $: max = Math.max(0, total - 1);
@@ -8,29 +17,100 @@
 
 <div class="controller">
     <div class="controls-left">
-        <button class="btn" on:click={prevStep} disabled={current === 0 || total === 0}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="19 20 9 12 19 4 19 20"></polygon><line x1="5" y1="19" x2="5" y2="5"></line></svg>
+        <button
+            class="btn"
+            on:click={prevStep}
+            disabled={current === 0 || total === 0}
+        >
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><polygon points="19 20 9 12 19 4 19 20"></polygon><line
+                    x1="5"
+                    y1="19"
+                    x2="5"
+                    y2="5"
+                ></line></svg
+            >
         </button>
-        
-        <button class="btn primary" on:click={togglePlay} disabled={total === 0}>
+
+        <button
+            class="btn primary"
+            on:click={togglePlay}
+            disabled={total === 0}
+        >
             {#if $isPlaying}
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16"></rect><rect x="14" y="4" width="4" height="16"></rect></svg>
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    ><rect x="6" y="4" width="4" height="16"></rect><rect
+                        x="14"
+                        y="4"
+                        width="4"
+                        height="16"
+                    ></rect></svg
+                >
             {:else}
-                <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 3 19 12 5 21 5 3"></polygon></svg>
+                <svg
+                    xmlns="http://www.w3.org/2000/svg"
+                    width="20"
+                    height="20"
+                    viewBox="0 0 24 24"
+                    fill="none"
+                    stroke="currentColor"
+                    stroke-width="2"
+                    stroke-linecap="round"
+                    stroke-linejoin="round"
+                    ><polygon points="5 3 19 12 5 21 5 3"></polygon></svg
+                >
             {/if}
         </button>
 
-        <button class="btn" on:click={nextStep} disabled={current >= max || total === 0}>
-            <svg xmlns="http://www.w3.org/2000/svg" width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polygon points="5 4 15 12 5 20 5 4"></polygon><line x1="19" y1="5" x2="19" y2="19"></line></svg>
+        <button
+            class="btn"
+            on:click={nextStep}
+            disabled={current >= max || total === 0}
+        >
+            <svg
+                xmlns="http://www.w3.org/2000/svg"
+                width="20"
+                height="20"
+                viewBox="0 0 24 24"
+                fill="none"
+                stroke="currentColor"
+                stroke-width="2"
+                stroke-linecap="round"
+                stroke-linejoin="round"
+                ><polygon points="5 4 15 12 5 20 5 4"></polygon><line
+                    x1="19"
+                    y1="5"
+                    x2="19"
+                    y2="19"
+                ></line></svg
+            >
         </button>
     </div>
 
     <div class="slider-container">
-        <input 
-            type="range" 
-            min="0" 
-            max={max} 
-            value={current} 
+        <input
+            type="range"
+            min="0"
+            {max}
+            value={current}
             on:input={(e) => goToStep(parseInt(e.currentTarget.value))}
             disabled={total === 0}
         />
@@ -126,9 +206,28 @@
         font-weight: bold;
     }
 
-    .phase-badge.init { background: #e5e7eb; color: #374151; }
-    .phase-badge.read { background: #dbeafe; color: #1e40af; }
-    .phase-badge.write { background: #fce7f3; color: #9d174d; }
-    .phase-badge.rebuild { background: #fef3c7; color: #92400e; }
-    .phase-badge.done { background: #d1fae5; color: #065f46; }
+    .phase-badge.init {
+        background: #e5e7eb;
+        color: #374151;
+    }
+    .phase-badge.read {
+        background: #fef9c3;
+        color: #854d0e;
+        border: 1px solid #eab308;
+    } /* Yellow */
+    .phase-badge.write {
+        background: #fee2e2;
+        color: #991b1b;
+        border: 1px solid #ef4444;
+    } /* Red */
+    .phase-badge.rebuild {
+        background: #dbeafe;
+        color: #1e40af;
+        border: 1px solid #3b82f6;
+    } /* Blue */
+    .phase-badge.done {
+        background: #d1fae5;
+        color: #065f46;
+        border: 1px solid #10b981;
+    }
 </style>

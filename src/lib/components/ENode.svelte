@@ -26,33 +26,38 @@
         $interactionStore.hover.id === canonicalId;
 
     // Active State Logic
-    $: isActive = (() => {
+    $: activeType = (() => {
         if (!$currentState?.metadata) return false;
         const { diffs, matches } = $currentState.metadata;
         const phase = $currentState.phase;
 
-        // Read Phase: Highlight matches
+        // Read Phase: Highlight matches (Yellow)
         if (phase === "read" && matches) {
-            return matches.some((m) => m.nodes.includes(id));
+            if (matches.some((m) => m.nodes.includes(id))) return "read";
         }
 
-        // Write Phase: Highlight diffs
+        // Write Phase: Highlight diffs (Red)
         if (phase === "write") {
-            return diffs.some(
-                (d) =>
-                    (d.type === "add" && d.nodeId === id) ||
-                    (d.type === "merge" &&
-                        (d.winner === id || d.losers.includes(id))),
-            );
+            if (
+                diffs.some(
+                    (d) =>
+                        (d.type === "add" && d.nodeId === id) ||
+                        (d.type === "merge" &&
+                            (d.winner === id || d.losers.includes(id))),
+                )
+            )
+                return "write";
         }
 
-        // Rebuild Phase: Highlight worklist
+        // Rebuild Phase: Highlight worklist (Blue)
         if (phase === "rebuild") {
-            return $currentState.worklist.includes(id);
+            if ($currentState.worklist.includes(id)) return "rebuild";
         }
 
         return false;
     })();
+
+    $: isActive = !!activeType;
 
     // Ghost State: If not canonical and not explicitly active
     $: isGhost = !isCanonical && !isActive;
@@ -80,7 +85,7 @@
 <!-- svelte-ignore a11y-click-events-have-key-events -->
 <!-- svelte-ignore a11y-no-static-element-interactions -->
 <div
-    class="enode mode-{mode} variant-{effectiveVariant}"
+    class="enode mode-{mode} variant-{effectiveVariant} type-{activeType}"
     class:selected={isSelected}
     class:hovered={isHovered}
     on:click={handleClick}
@@ -142,9 +147,34 @@
 
     /* --- Variants --- */
     .variant-active {
-        border-color: #000;
-        background: #fff;
-        color: #000;
+        /* Default active color (fallback) */
+        --active-color: #000;
+        --active-bg: #fff;
+    }
+
+    /* Specific Active Types */
+    .variant-active.type-read {
+        --active-color: #854d0e; /* Yellow-800 */
+        --active-bg: #fef9c3; /* Yellow-100 */
+        border-color: #eab308; /* Yellow-500 */
+    }
+
+    .variant-active.type-write {
+        --active-color: #991b1b; /* Red-800 */
+        --active-bg: #fee2e2; /* Red-100 */
+        border-color: #ef4444; /* Red-500 */
+    }
+
+    .variant-active.type-rebuild {
+        --active-color: #1e40af; /* Blue-800 */
+        --active-bg: #dbeafe; /* Blue-100 */
+        border-color: #3b82f6; /* Blue-500 */
+    }
+
+    .variant-active {
+        border-color: var(--active-color);
+        background: var(--active-bg);
+        color: var(--active-color);
         box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
         transform: translateY(-1px);
         z-index: 10;
