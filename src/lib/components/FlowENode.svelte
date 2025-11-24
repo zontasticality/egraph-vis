@@ -19,5 +19,10 @@
         /* Svelte Flow nodes have absolute positioning, but the wrapper just needs to hold the ENode */
         /* We might want to ensure it doesn't interfere with ENode's styling */
         pointer-events: all;
+        width: 100%;
+        height: 100%;
+        display: flex;
+        align-items: center;
+        justify-content: center;
     }
 </style>

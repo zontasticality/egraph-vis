@@ -125,6 +125,24 @@
 					{/each}
 				</div>
 			</section>
+
+			<hr />
+
+			<!-- 3. Worklist View -->
+			<section>
+				<h3>Worklist ({$currentState.worklist.length})</h3>
+				<div class="worklist">
+					{#if $currentState.worklist.length === 0}
+						<span class="empty-text">Empty</span>
+					{:else}
+						{#each $currentState.worklist as id}
+							<div class="worklist-item">
+								<ENode {id} mode="id" />
+							</div>
+						{/each}
+					{/if}
+				</div>
+			</section>
 		</div>
 	{/if}
 </div>
@@ -262,6 +280,23 @@
 		padding: 2px 6px;
 		border-radius: 4px;
 		border: 1px solid #e5e7eb;
+	}
+
+	/* Worklist */
+	.worklist {
+		display: flex;
+		flex-wrap: wrap;
+		gap: 0.5rem;
+	}
+
+	.worklist-item {
+		/* No extra styling needed, ENode handles it */
+	}
+
+	.empty-text {
+		color: #9ca3af;
+		font-style: italic;
+		font-size: 0.9rem;
 	}
 
 	.empty {

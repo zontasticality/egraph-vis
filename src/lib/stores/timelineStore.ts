@@ -37,7 +37,7 @@ export const progress = derived(
 let engine: TimelineEngine | null = null;
 let playInterval: any = null;
 
-export function loadPreset(preset: PresetConfig, options: EngineOptions = { implementation: 'naive', iterationCap: 10 }) {
+export function loadPreset(preset: PresetConfig, options: EngineOptions = { implementation: 'naive', iterationCap: 100 }) {
     stop();
     engine = new TimelineEngine();
     engine.loadPreset(preset, options);

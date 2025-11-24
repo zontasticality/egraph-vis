@@ -301,7 +301,6 @@
 	}
 </script>
 
-```ts
 <div class="graph-container">
 	<SvelteFlow
 		nodes={$nodes}

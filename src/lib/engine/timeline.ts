@@ -57,6 +57,18 @@ export class TimelineEngine implements EGraphEngine {
 
             // 2. Write Phase
             applyMatches(this.runtime, matches, this.options.implementation);
+
+            // Check for effective changes
+            // If applyMatches produced no diffs, it means all matches were redundant (already merged).
+            // We should stop to avoid infinite loops of "Find Match -> No-op -> Snapshot".
+            if (this.runtime.diffs.length === 0) {
+                this.timeline.haltedReason = 'saturated';
+                // We still emit the 'read' snapshot that happened before this, 
+                // but we don't emit a 'write' snapshot because nothing changed.
+                // Actually, we already emitted 'read'.
+                break;
+            }
+
             this.emitSnapshot('write');
 
             // 3. Rebuild Phase
