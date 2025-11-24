@@ -32,7 +32,7 @@ export interface EGraphState {
     implementation: 'naive' | 'deferred';
     unionFind: Array<{ id: number; canonical: number; isCanonical: boolean }>;
     eclasses: EClassViewModel[];
-    hashcons: Array<{ key: string; canonical: number }>;
+    nodeChunks: ENode[][]; // Chunked array of all nodes (index = id)
     worklist: number[];
     metadata: StepMetadata;
 }
@@ -46,6 +46,7 @@ export interface EClassViewModel {
 
 export interface StepMetadata {
     diffs: DiffEvent[];
+    matches: MatchEvent[]; // Nodes involved in pattern matches
     invariants: {
         congruenceValid: boolean;
         hashconsValid: boolean;
@@ -53,6 +54,11 @@ export interface StepMetadata {
     selectionHints: Array<{ type: 'eclass' | 'enode' | 'hashcons'; id: number | string }>;
     haltedReason?: 'saturated' | 'iteration-cap' | 'canceled';
     timestamp?: number;
+}
+
+export interface MatchEvent {
+    rule: string;
+    nodes: number[]; // IDs of nodes involved in the match
 }
 
 export type DiffEvent =

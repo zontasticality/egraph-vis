@@ -12,6 +12,7 @@ import type {
     Pattern,
     ENodeId
 } from './types';
+import { ChunkedArray } from '../utils/chunkedArray';
 
 export class TimelineEngine implements EGraphEngine {
     private runtime: EGraphRuntime;
@@ -118,7 +119,7 @@ export class TimelineEngine implements EGraphEngine {
         build(pattern);
     }
 
-    private emitSnapshot(phase: EGraphState['phase']) {
+    private emitSnapshot(phase: EGraphState['phase'], matches: any[] = []) {
         const prevState = this.timeline.states[this.timeline.states.length - 1];
 
         // If no previous state, create initial empty state
@@ -130,10 +131,11 @@ export class TimelineEngine implements EGraphEngine {
             implementation: this.options.implementation,
             unionFind: [],
             eclasses: [],
-            hashcons: [],
+            nodeChunks: [],
             worklist: [],
             metadata: {
                 diffs: [],
+                matches: [],
                 invariants: { congruenceValid: true, hashconsValid: true },
                 selectionHints: []
             }
@@ -190,16 +192,33 @@ export class TimelineEngine implements EGraphEngine {
 
             draft.eclasses = newEClasses;
 
-            // 3. Update Hashcons
-            // Spec: "Sort ... by lexical key".
-            // runtime.hashcons is Map<string, number>.
-            const sortedHashcons = Array.from(this.runtime.hashcons.entries())
-                .sort((a, b) => a[0].localeCompare(b[0]))
-                .map(([key, canonical]) => ({ key, canonical }));
+            // 3. Update Node Chunks (Append-only)
+            // We use the ChunkedArray helper to wrap the draft's chunks array
+            const chunkedNodes = ChunkedArray.from(draft.nodeChunks);
+            // We need to append any new nodes that aren't in the chunks yet.
+            // Current length of chunked array:
+            const currentLength = chunkedNodes.length;
+            // Runtime nextId tells us how many nodes exist total.
+            // We iterate from currentLength to nextId - 1.
 
-            // We can't easily structurally share this array unless we do diffing.
-            // Given it's just {key, canonical}, it's lightweight.
-            draft.hashcons = sortedHashcons;
+            // We need to access the raw nodes from runtime.
+            // Currently runtime doesn't expose a simple ID -> Node map, 
+            // but we can iterate hashcons or store a separate list in runtime.
+            // Wait, runtime.hashcons is Map<string, number>. It doesn't store the node structure by ID easily.
+            // BUT, we know that IDs are assigned sequentially.
+            // We need to find the node for each ID.
+            // Since we don't have a direct ID->Node map in runtime, we might need to add one to runtime
+            // OR we can reconstruct it.
+            // Actually, `runtime.addEnode` creates the node.
+            // Let's assume for now we can get it. 
+            // I will add `nodes: ENode[]` to `EGraphRuntime` to make this O(1).
+            // For now, I'll use a hack or update runtime.
+            // Let's update runtime.ts as well to store `nodes: ENode[]`.
+
+            // Assuming runtime.nodes exists:
+            for (let id = currentLength; id < this.runtime.nodes.length; id++) {
+                chunkedNodes.push(this.runtime.nodes[id]);
+            }
 
             // 4. Update Worklist
             draft.worklist = Array.from(this.runtime.worklist).sort((a, b) => a - b);
@@ -207,6 +226,7 @@ export class TimelineEngine implements EGraphEngine {
             // 5. Metadata
             draft.metadata = {
                 diffs: [...this.runtime.diffs], // Copy current diffs
+                matches: matches.map(m => ({ rule: m.rule, nodes: m.nodes })), // Copy matches
                 invariants: {
                     congruenceValid: this.runtime.worklist.size === 0,
                     hashconsValid: true // Assumed true for now

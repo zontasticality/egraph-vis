@@ -62,6 +62,7 @@ export class EGraphRuntime {
     unionFind = new UnionFind();
     eclasses = new Map<ENodeId, EClassRuntime>();
     hashcons = new Map<string, ENodeId>();
+    nodes: ENode[] = []; // Registry of all nodes by ID
     worklist = new Set<ENodeId>();
     nextId = 0;
     diffs: DiffEvent[] = [];
@@ -97,6 +98,7 @@ export class EGraphRuntime {
         }
 
         this.diffs.push({ type: 'add', nodeId: id, enode: canonical });
+        this.nodes[id] = canonical; // Store node in registry
         return id;
     }
 
