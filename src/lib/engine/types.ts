@@ -16,7 +16,7 @@ export interface ParentInfo {
 
 export interface EClassRuntime {
     id: ENodeId;                     // canonical id
-    nodes: ENode[];                  // raw nodes in the class
+    nodes: ENodeId[];                // Store IDs instead of full objects
     parents: Map<string, ParentInfo>;// key = `${parentId}:${canonicalKey(parent)}`
     data?: Record<string, unknown>;  // optional analysis payload
     version: number;                 // incremented on mutation
@@ -39,7 +39,7 @@ export interface EGraphState {
 
 export interface EClassViewModel {
     id: number;
-    nodes: Array<{ op: string; args: number[] }>;
+    nodes: Array<{ id: number; op: string; args: number[] }>;
     parents: Array<{ parentId: number; op: string }>;
     inWorklist: boolean;
 }

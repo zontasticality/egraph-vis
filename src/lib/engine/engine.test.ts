@@ -407,6 +407,7 @@ describe('TimelineEngine', () => {
             const listNode = listClass.nodes.find(n => n.op === 'list')!;
 
             // The two args should be the SAME ID
+            // listNode.args are now IDs (canonicalized in ViewModel)
             expect(listNode.args[0]).toBe(listNode.args[1]);
         });
 

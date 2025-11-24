@@ -12,19 +12,85 @@ Describes how snapshots from the timeline are rendered. All components consume i
 ## 2. Design System
 Shared visual primitives used across both Graph and State panes to ensure consistency.
 
-### 2.1 E-Node ID (Diamond)
-- **Shape**: Colored diamond containing the ID number.
-- **Color**: Mapped to a fixed accessible palette based on the ID (stable across renders).
-- **Badge**: Yellow star (`★`) in top-right if it is a *canonical* ID (representative).
-- **Usage**: Represents an E-Class ID in lists, headers, and graph nodes.
+### 2.1 E-Node Component (`<ENode />`)
+A unified, context-aware component that renders an E-Node or E-Class ID.
 
-### 2.2 E-Node (Symbol Box)
-- **Shape**: Transparent box with rounded corners.
-- **Content**: Operator symbol (e.g., `*`, `+`, `a`) followed by child E-Node IDs (Diamonds) in parentheses.
-- **Style**:
-  - **Active**: Black text, white background, solid border.
-  - **Ghost**: Dark grey stroke, light grey background (used for merged/stale nodes in history or diffs).
-  - *Note*: Ghost nodes are non-interactive (no hover/click effects) to reduce noise.
+#### Props
+- `id`: `ENodeId` (Required) - The ID of the E-Node/E-Class to render.
+- `variant`: `'default' | 'ghost' | 'active'` (Optional) - Overrides the derived state.
+- `mode`: `'id' | 'symbol'` (Optional) - Explicitly force a mode. If undefined, defaults to `'id'` unless the component is used in a context that implies symbol view (e.g. E-Class body). *Actually, let's make it smarter: The component can check if the ID corresponds to a Canonical Class ID or a specific E-Node ID if we distinguish them. But currently `ENodeId` and `EClassId` are just numbers.*
+*Refinement*: To support the user's request, we need a way to know *which* E-Node structure to render for a given ID if that ID represents a Class (which has multiple nodes).
+*Correction*: The user asked: "if we could just fetch the e-node from the timelineState given the id".
+If `id` refers to an E-Class, it has *many* nodes.
+If `id` refers to a specific E-Node (hashcons), it has *one* structure.
+In the `EGraphState`, `eclasses` maps `EClassId -> ENode[]`.
+So if we pass an `EClassId`, we can't know *which* symbol to show unless we are iterating over the class.
+*However*, the user might be thinking of the *Hashcons* view where `ENode -> ID`.
+Or maybe they want to pass `(EClassId, index)` to uniquely identify an E-Node?
+Let's look at `types.ts` again. `EClassViewModel` has `nodes: Array<{ op, args }>`.
+So an E-Node is identified by `(classId, index)`.
+Or we can pass the `ENode` structure itself if it's ephemeral (like in a list).
+*But* the user said "fetch the e-node from the timelineState given the id".
+This implies stable IDs for *individual* E-Nodes.
+Currently `ENodeId` is just `number`. In `runtime`, `addEnode` returns an ID.
+If we use `hashcons`, every unique `ENode` structure has a stable ID.
+So yes, `id` *should* uniquely map to an `{ op, args }` structure if we look it up in the `hashcons` or a global node registry.
+*Current Implementation*: `EGraphState` has `hashcons: Array<{ key, canonical }>`. It doesn't explicitly store `ID -> {op, args}` map for *all* nodes, but `eclasses` contains the grouped nodes.
+To support "ID -> Node" lookup, we might need a helper or a map in the state.
+*Decision*: I will assume we can implement a helper `getENode(state, id)` that finds the node structure. If `id` is a Class ID, it might return the *representative* node or we might need to be specific.
+*Actually*, in an E-Graph, "E-Node ID" usually *is* the "E-Class ID" it belongs to (after canonicalization).
+But physically, `f(a)` and `f(b)` might be different nodes that merge into the same class.
+If the user wants to render a specific *structure* `f(a)` using just an ID, that ID must be unique to that structure (the "Hashcons ID").
+If the system uses Hashcons IDs as the primary keys, then yes, `ID -> Structure` is stable.
+I will update the spec to say:
+- `id`: The Hashcons ID of the node.
+- The component looks up `{ op, args }` from the state using this ID.
+- If the ID represents a Class (canonical), it might show the representative?
+Let's stick to:
+- `id`: `number`
+- `structure`: `ENode` (Optional). If provided, use it. If not, try to look it up.
+*Wait*, the user specifically asked to *avoid* passing the node.
+"shouldn't we be able to always assume the id-e-node relation is stable"
+Yes, if we track it.
+I will update the spec to use `id` primarily, and fetch structure from a new `nodeRegistry` or similar in the state if needed, or just iterate to find it (slow).
+Better: Ensure `EGraphState` has a `nodes` map or we can derive it.
+For now, let's assume we can look it up.
+
+#### Props
+- `id`: `ENodeId` (Required)
+- `mode`: `'id' | 'symbol'` (Default: 'id') - 'id' shows the diamond. 'symbol' shows the box content.
+- `variant`: `'default' | 'ghost' | 'active'` (Optional)
+
+#### Modes
+1.  **ID Mode** (Default):
+    -   **Visual**: A colored "pill" or "diamond" containing the ID.
+    -   **Color**: Derived from `id`.
+2.  **Symbol Mode** (Explicit `mode="symbol"`):
+    -   **Visual**: A container displaying the `op` string, followed by a list of arguments rendered as **ID Mode** E-Nodes.
+    -   **Data**: Fetches `{ op, args }` corresponding to `id` from the current state.
+    -   **Layout**: `op` + `(` + `arg0` + `,` + `arg1` + ... + `)`
+
+#### Visual States (Derived)
+The component automatically subscribes to `interactionStore` and `timelineStore` to determine its look:
+-   **Base**:
+    -   Background: White (Symbol) or Light Color (ID).
+    -   Border: Thin Grey (Symbol) or None (ID).
+-   **Active** (Modified in current step):
+    -   *Trigger*: ID is in `step.diffs` (created/merged) or `step.matches` (read phase).
+    -   *Visual*: High-contrast border, slightly elevated shadow.
+-   **Hovered** (User hovering this ID anywhere):
+    -   *Trigger*: `interactionStore.hover.id === id`.
+    -   *Visual*: Light Blue highlight/glow.
+-   **Selected** (User clicked this ID):
+    -   *Trigger*: `interactionStore.selection.id === id`.
+    -   *Visual*: Solid Blue border, Blue background tint.
+-   **Ghost** (Merged/Stale):
+    -   *Trigger*: ID is not canonical in the current state.
+    -   *Visual*: Greyed out, dashed border, reduced opacity.
+
+#### Interaction
+-   **Click**: Calls `interactionStore.select(id)`.
+-   **Hover**: Calls `interactionStore.hover(id)`.
 
 ### 2.3 E-Class (Cluster)
 - **Shape**: Box with dotted border.
@@ -60,7 +126,7 @@ Backed by Svelte Flow (`@xyflow/svelte`) and ELK Layout.
 - **Empty State**: If graph is empty, show "Empty E-Graph" placeholder.
 
 ## 5. State Pane (`StatePane.svelte`)
-Scrollable column visualizing internal structures.
+Scrollable column visualizing internal structures with 2 sub-sections: Hashcons, and E-Classes
 
 ### 5.1 Hashcons View
 - **Purpose**: **Canonical Node Registry**. Maps unique node structures to their assigned E-Class IDs.

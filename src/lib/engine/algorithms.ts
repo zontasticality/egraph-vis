@@ -80,7 +80,8 @@ export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Ma
 
             // Try to match the LHS pattern against any node in this class
             // A class matches if ANY of its nodes matches
-            for (const node of eclass.nodes) {
+            for (const nodeId of eclass.nodes) {
+                const node = runtime.nodes[nodeId];
                 const subst = matchPattern(runtime, rule.lhs, node);
                 if (subst) {
                     matches.push({ rule, eclassId: id, substitution: subst });
@@ -187,7 +188,10 @@ function matchPattern(
                     // Check if class `nodeArgId` has literal `patArg`
                     const childClass = runtime.eclasses.get(nodeArgId);
                     if (!childClass) return null;
-                    if (!childClass.nodes.some(n => n.op === patArg && n.args.length === 0)) {
+                    if (!childClass.nodes.some(id => {
+                        const n = runtime.nodes[id];
+                        return n.op === patArg && n.args.length === 0;
+                    })) {
                         return null;
                     }
                 }
@@ -202,7 +206,8 @@ function matchPattern(
                     return null;
                 }
                 let found = false;
-                for (const childNode of childClass.nodes) {
+                for (const childId of childClass.nodes) {
+                    const childNode = runtime.nodes[childId];
                     const res = matchPattern(runtime, patArg, childNode, newSubst);
                     if (res) {
                         for (const [k, v] of res) newSubst.set(k, v);

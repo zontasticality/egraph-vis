@@ -15,6 +15,13 @@
 	import type { EGraphState } from "../engine/types";
 	import { getColorForId, getLightColorForId } from "../utils/colors";
 
+	import ENode from "./ENode.svelte";
+	import FlowENode from "./FlowENode.svelte"; // I will create this next
+
+	const nodeTypes = {
+		enode: FlowENode,
+	};
+
 	// --- State ---
 
 	const nodes = writable<Node[]>([]);
@@ -65,7 +72,8 @@
 		const elkNodes: any[] = [];
 		const elkEdges: any[] = [];
 
-		const nodeWidth = 150;
+		// Estimate dimensions for ENode component
+		const nodeWidth = 100; // Approximate width for symbol mode
 		const nodeHeight = 40;
 		const clusterPadding = 20;
 
@@ -75,18 +83,17 @@
 			const lightColor = getLightColorForId(eclass.id);
 
 			eclass.nodes.forEach((enode, index) => {
-				const nodeId = `node-${eclass.id}-${index}`;
+				const nodeId = `node-${enode.id}`; // Use actual Node ID for stability
 				children.push({
 					id: nodeId,
 					width: nodeWidth,
 					height: nodeHeight,
-					labels: [{ text: `${enode.op}(${enode.args.join(", ")})` }],
+					labels: [{ text: enode.op }], // Fallback label
 					data: {
-						label: enode.op,
-						args: enode.args,
+						id: enode.id, // Pass ID to FlowENode
+						mode: "symbol",
 						eclassId: eclass.id,
-						enodeId: index, // Tracking specific enode if needed
-						color: color, // Pass color to node
+						color: color,
 					},
 				});
 			});
@@ -96,10 +103,10 @@
 				children: children,
 				layoutOptions: {
 					"elk.direction": "DOWN",
-					"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`, // Extra top padding for label
+					"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`,
 					"elk.spacing.nodeNode": "10",
 				},
-				labels: [{ text: `ID: ${eclass.id}` }], // Simplified label
+				labels: [{ text: `ID: ${eclass.id}` }],
 				data: {
 					eclassId: eclass.id,
 					color: color,
@@ -110,8 +117,8 @@
 
 		let edgeId = 0;
 		for (const eclass of state.eclasses) {
-			eclass.nodes.forEach((enode, nodeIndex) => {
-				const sourceId = `node-${eclass.id}-${nodeIndex}`;
+			eclass.nodes.forEach((enode) => {
+				const sourceId = `node-${enode.id}`;
 
 				enode.args.forEach((argClassId, argIndex) => {
 					const targetId = `class-${argClassId}`;
@@ -134,6 +141,7 @@
 				"elk.layered.spacing.nodeNodeBetweenLayers": "40",
 				"elk.layered.crossingMinimization.strategy": "INTERACTIVE",
 				"elk.layered.nodePlacement.strategy": "INTERACTIVE",
+				"elk.hierarchyHandling": "INCLUDE_CHILDREN",
 			},
 			children: elkNodes,
 			edges: elkEdges,
@@ -150,7 +158,7 @@
 
 				const flowNode: Node = {
 					id: node.id,
-					type: isCluster ? "group" : "default",
+					type: isCluster ? "group" : "enode", // Use 'enode' for children
 					position: { x: node.x, y: node.y },
 					data: {
 						label: node.labels?.[0]?.text || "",
@@ -159,21 +167,23 @@
 					style: `width: ${node.width}px; height: ${node.height}px;`,
 					parentId: parentId,
 					extent: isCluster ? "parent" : undefined,
-					draggable: false, // Disable dragging for stability
+					draggable: false,
 				};
 
-				// Base styles
+				// Cluster Styles
 				if (isCluster) {
 					const borderColor = node.data.color || "#999";
 					const bg =
 						node.data.lightColor || "rgba(240, 240, 240, 0.5)";
-					// We can't easily render a diamond here without a custom node,
-					// but we can color the border and background.
 					flowNode.style += `background: ${bg}; border: 2px dashed ${borderColor}; border-radius: 8px; color: ${borderColor}; font-weight: bold;`;
 				} else {
-					// Symbol Box
+					// ENode Styles: Handled by component, but we need to ensure wrapper is transparent/sized
+					// Svelte Flow nodes have default styles (border, bg). We might want to remove them for 'enode' type?
+					// Or we can let FlowENode handle it.
+					// But 'style' prop applies to the wrapper div.
+					// Let's make the wrapper transparent so ENode component controls the look.
 					flowNode.style +=
-						"background: white; border: 1px solid #333; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-family: monospace; box-shadow: 0 1px 2px rgba(0,0,0,0.1);";
+						"background: transparent; border: none; padding: 0;";
 				}
 
 				newNodes.push(flowNode);
@@ -213,7 +223,8 @@
 	// React to state changes
 	$: updateLayout($currentState);
 
-	// React to interaction changes to update styles
+	// React to interaction changes to update styles (Clusters only)
+	// ENode component handles its own interaction styles!
 	$: {
 		const $interaction = $interactionStore;
 		const $mode = $transitionMode;
@@ -221,9 +232,6 @@
 		nodes.update((currentNodes) => {
 			return currentNodes.map((node) => {
 				let style = node.style || "";
-				// Reset borders/backgrounds to base state (simplified)
-				// Note: This is a bit destructive if we had other dynamic styles.
-				// Ideally we'd toggle classes, but Svelte Flow style prop is inline.
 
 				const isCluster = node.id.startsWith("class-");
 				const eclassId = node.data?.eclassId;
@@ -246,8 +254,6 @@
 					}
 				}
 
-				// Re-apply base styles + overrides
-				// This is inefficient but robust for now.
 				if (isCluster) {
 					const baseColor = node.data.color || "#999";
 					const baseBg =
@@ -259,36 +265,30 @@
 					let boxShadow = "none";
 
 					if (isSelected) {
-						borderColor = "#2563eb"; // Blue override for selection
+						borderColor = "#2563eb";
 						borderWidth = "3px";
 						bg = "rgba(37, 99, 235, 0.1)";
 						boxShadow = "0 0 0 4px rgba(37, 99, 235, 0.2)";
 					} else if (isHovered) {
-						borderColor = "#60a5fa"; // Light Blue
+						borderColor = "#60a5fa";
 						borderWidth = "3px";
 					}
 
-					style = `width: ${node.width}px; height: ${node.height}px; background: ${bg}; border: ${borderWidth} dashed ${borderColor}; border-radius: 8px; transition: all 0.2s; color: ${baseColor}; font-weight: bold; box-shadow: ${boxShadow};`;
-				} else {
-					let borderColor = "#333";
-					let borderWidth = "1px";
-					let bg = "white";
-					let boxShadow = "0 1px 2px rgba(0,0,0,0.1)";
+					// Reconstruct style string (hacky but works for now)
+					// We preserve width/height
+					const widthMatch = style.match(/width: [^;]+;/);
+					const heightMatch = style.match(/height: [^;]+;/);
+					const w = widthMatch ? widthMatch[0] : "";
+					const h = heightMatch ? heightMatch[0] : "";
 
-					if (isSelected) {
-						borderColor = "#2563eb";
-						borderWidth = "2px";
-						boxShadow = "0 0 0 2px rgba(37, 99, 235, 0.2)";
-					} else if (isHovered) {
-						borderColor = "#60a5fa";
-						borderWidth = "2px";
-					}
-
-					style = `width: ${node.width}px; height: ${node.height}px; background: ${bg}; border: ${borderWidth} solid ${borderColor}; border-radius: 4px; display: flex; align-items: center; justify-content: center; font-family: monospace; transition: all 0.2s; box-shadow: ${boxShadow};`;
+					style = `${w} ${h} background: ${bg}; border: ${borderWidth} dashed ${borderColor}; border-radius: 8px; transition: all 0.2s; color: ${baseColor}; font-weight: bold; box-shadow: ${boxShadow};`;
 				}
+				// For ENodes, we don't update style here because the component handles it.
+				// UNLESS we need to handle transition mode for them too?
+				// ENode component can subscribe to transitionMode.
 
-				// Handle transition mode
-				if ($mode === "instant") {
+				// Handle transition mode for clusters
+				if ($mode === "instant" && isCluster) {
 					style = style.replace(
 						"transition: all 0.2s;",
 						"transition: none;",
@@ -301,6 +301,7 @@
 	}
 </script>
 
+```ts
 <div class="graph-container">
 	<SvelteFlow
 		nodes={$nodes}

@@ -80,7 +80,7 @@ export class EGraphRuntime {
 
         const newClass: EClassRuntime = {
             id,
-            nodes: [canonical],
+            nodes: [id], // Store ID
             parents: new Map(),
             version: 0
         };
@@ -145,20 +145,8 @@ export class EGraphRuntime {
         }
 
         // Update hashcons for nodes moving to winner
-        // We don't strictly need to update hashcons for *existing* nodes in the loser class 
-        // because their canonical key might change, but they are already in the e-class.
-        // However, future lookups might fail if we don't re-insert them with new keys?
-        // Actually, hashcons maps Key -> EClassId. 
-        // The Key depends on children's canonical IDs. 
-        // Since children didn't change (we merged A and B, not their children), 
-        // the keys of nodes *inside* A and B don't change yet.
-        // BUT, if A or B were children of some other node C, then C's key changes.
-        // That is handled by `rebuild`.
-        // Here we just need to ensure `hashcons` points to `winner` for any keys that pointed to `loser`.
-        // But wait, `hashcons` keys are structural. 
-        // If `op(x)` was in `loser`, `hashcons[op(x)]` was `loser`.
-        // Now it should be `winner`.
-        for (const node of loserClass.nodes) {
+        for (const nodeId of loserClass.nodes) {
+            const node = this.nodes[nodeId]; // Look up node from registry
             const key = this.canonicalKey(node);
             this.hashcons.set(key, winner);
         }

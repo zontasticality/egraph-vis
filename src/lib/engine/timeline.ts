@@ -174,10 +174,14 @@ export class TimelineEngine implements EGraphEngine {
                     // Create new ViewModel
                     const vm: EClassViewModel = {
                         id,
-                        nodes: runtimeClass.nodes.map(n => ({
-                            op: n.op,
-                            args: n.args.map(arg => this.runtime.find(arg)) // Canonicalize args for UI
-                        })).sort((a, b) => a.op.localeCompare(b.op)), // Sort nodes
+                        nodes: runtimeClass.nodes.map(nodeId => {
+                            const n = this.runtime.nodes[nodeId];
+                            return {
+                                id: nodeId,
+                                op: n.op,
+                                args: n.args.map(arg => this.runtime.find(arg)) // Canonicalize args for UI
+                            };
+                        }).sort((a, b) => a.op.localeCompare(b.op)), // Sort nodes
                         parents: Array.from(runtimeClass.parents.values()).map(p => ({
                             parentId: this.runtime.find(p.parentId), // Canonicalize parent ID too
                             op: p.enode.op
@@ -199,21 +203,6 @@ export class TimelineEngine implements EGraphEngine {
             // Current length of chunked array:
             const currentLength = chunkedNodes.length;
             // Runtime nextId tells us how many nodes exist total.
-            // We iterate from currentLength to nextId - 1.
-
-            // We need to access the raw nodes from runtime.
-            // Currently runtime doesn't expose a simple ID -> Node map, 
-            // but we can iterate hashcons or store a separate list in runtime.
-            // Wait, runtime.hashcons is Map<string, number>. It doesn't store the node structure by ID easily.
-            // BUT, we know that IDs are assigned sequentially.
-            // We need to find the node for each ID.
-            // Since we don't have a direct ID->Node map in runtime, we might need to add one to runtime
-            // OR we can reconstruct it.
-            // Actually, `runtime.addEnode` creates the node.
-            // Let's assume for now we can get it. 
-            // I will add `nodes: ENode[]` to `EGraphRuntime` to make this O(1).
-            // For now, I'll use a hack or update runtime.
-            // Let's update runtime.ts as well to store `nodes: ENode[]`.
 
             // Assuming runtime.nodes exists:
             for (let id = currentLength; id < this.runtime.nodes.length; id++) {
