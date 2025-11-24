@@ -7,17 +7,47 @@
     import GraphPane from "$lib/components/GraphPane.svelte";
     import StatePane from "$lib/components/StatePane.svelte";
 
-    // Temporary preset for testing
+    // Full example from the paper
     const demoPreset = {
-        id: "demo",
-        label: "Demo",
-        description: "Demo preset",
-        root: { op: "*", args: ["a", "2"] },
+        id: "paper-example",
+        label: "Paper Example",
+        description: "Standard example from the egg paper: (a * 2) / 2",
+        root: { op: "/", args: [{ op: "*", args: ["a", "2"] }, "2"] },
         rewrites: [
             {
-                name: "shift",
+                name: "mul-to-shift",
                 lhs: { op: "*", args: ["?x", "2"] },
                 rhs: { op: "<<", args: ["?x", "1"] },
+                enabled: true,
+            },
+            {
+                name: "shift-to-mul",
+                lhs: { op: "<<", args: ["?x", "1"] },
+                rhs: { op: "*", args: ["?x", "2"] },
+                enabled: true,
+            },
+            {
+                name: "div-to-shift",
+                lhs: { op: "/", args: ["?x", "2"] },
+                rhs: { op: ">>", args: ["?x", "1"] },
+                enabled: true,
+            },
+            {
+                name: "cancel-div",
+                lhs: { op: "/", args: ["?x", "?x"] },
+                rhs: "1",
+                enabled: true,
+            },
+            {
+                name: "mul-one",
+                lhs: { op: "*", args: ["?x", "1"] },
+                rhs: "?x",
+                enabled: true,
+            },
+            {
+                name: "factor-out-div",
+                lhs: { op: "/", args: [{ op: "*", args: ["?x", "?y"] }, "?z"] },
+                rhs: { op: "*", args: ["?x", { op: "/", args: ["?y", "?z"] }] },
                 enabled: true,
             },
         ],

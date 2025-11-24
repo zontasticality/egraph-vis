@@ -135,7 +135,7 @@
     .mode-symbol {
         padding: 2px 6px;
         background: white;
-        border: 1px solid #e5e7eb;
+        border: 2px solid var(--id-color);
         color: #374151;
         gap: 2px;
     }

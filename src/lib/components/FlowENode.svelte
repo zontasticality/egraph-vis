@@ -6,12 +6,22 @@
 </script>
 
 <div class="flow-enode-wrapper">
-    <Handle type="target" position={Position.Top} style="opacity: 0;" />
+    <Handle
+        type="target"
+        position={Position.Top}
+        isConnectable={false}
+        style="opacity: 0; pointer-events: none;"
+    />
 
     <!-- We pass the ID and Mode from data -->
     <ENode id={data.id} mode={data.mode} />
 
-    <Handle type="source" position={Position.Bottom} style="opacity: 0;" />
+    <Handle
+        type="source"
+        position={Position.Bottom}
+        isConnectable={false}
+        style="opacity: 0; pointer-events: none;"
+    />
 </div>
 
 <style>

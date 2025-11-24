@@ -6,6 +6,7 @@
 		type Node,
 		type Edge,
 		useSvelteFlow,
+		MarkerType,
 	} from "@xyflow/svelte";
 	import "@xyflow/svelte/dist/style.css";
 	import { writable, get } from "svelte/store";
@@ -17,9 +18,11 @@
 
 	import ENode from "./ENode.svelte";
 	import FlowENode from "./FlowENode.svelte"; // I will create this next
+	import FlowEClassGroup from "./FlowEClassGroup.svelte";
 
 	const nodeTypes = {
 		enode: FlowENode,
+		eclassGroup: FlowEClassGroup,
 	};
 
 	// --- State ---
@@ -102,6 +105,7 @@
 				id: `class-${eclass.id}`,
 				children: children,
 				layoutOptions: {
+					"elk.algorithm": "layered",
 					"elk.direction": "DOWN",
 					"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`,
 					"elk.spacing.nodeNode": "10",
@@ -139,8 +143,6 @@
 				"elk.direction": "DOWN",
 				"elk.spacing.nodeNode": "40",
 				"elk.layered.spacing.nodeNodeBetweenLayers": "40",
-				"elk.layered.crossingMinimization.strategy": "INTERACTIVE",
-				"elk.layered.nodePlacement.strategy": "INTERACTIVE",
 				"elk.hierarchyHandling": "INCLUDE_CHILDREN",
 			},
 			children: elkNodes,
@@ -158,10 +160,12 @@
 
 				const flowNode: Node = {
 					id: node.id,
-					type: isCluster ? "group" : "enode", // Use 'enode' for children
+					type: isCluster ? "eclassGroup" : "enode", // Use custom types
 					position: { x: node.x, y: node.y },
 					data: {
 						label: node.labels?.[0]?.text || "",
+						width: node.width,
+						height: node.height,
 						...node.data,
 					},
 					style: `width: ${node.width}px; height: ${node.height}px;`,
@@ -170,21 +174,10 @@
 					draggable: false,
 				};
 
-				// Cluster Styles
-				if (isCluster) {
-					const borderColor = node.data.color || "#999";
-					const bg =
-						node.data.lightColor || "rgba(240, 240, 240, 0.5)";
-					flowNode.style += `background: ${bg}; border: 2px dashed ${borderColor}; border-radius: 8px; color: ${borderColor}; font-weight: bold;`;
-				} else {
-					// ENode Styles: Handled by component, but we need to ensure wrapper is transparent/sized
-					// Svelte Flow nodes have default styles (border, bg). We might want to remove them for 'enode' type?
-					// Or we can let FlowENode handle it.
-					// But 'style' prop applies to the wrapper div.
-					// Let's make the wrapper transparent so ENode component controls the look.
-					flowNode.style +=
-						"background: transparent; border: none; padding: 0;";
-				}
+				// Styles are now handled by the components based on data
+				// We just ensure the wrapper is transparent/sized correctly
+				flowNode.style +=
+					"background: transparent; border: none; padding: 0;";
 
 				newNodes.push(flowNode);
 
@@ -207,8 +200,13 @@
 						target: edge.targets[0],
 						type: "smoothstep",
 						animated: false,
-						label: edge.labels?.[0]?.text,
+						// label: edge.labels?.[0]?.text, // Removed label
 						style: "stroke: #b1b1b7;",
+						markerEnd: {
+							type: MarkerType.ArrowClosed,
+							color: "#b1b1b7",
+						},
+						// targetHandle: null, // No longer needed as we have a default handle
 					});
 				});
 			}
@@ -231,7 +229,24 @@
 
 		nodes.update((currentNodes) => {
 			return currentNodes.map((node) => {
-				let style = node.style || "";
+				// We don't need to update style string anymore for clusters,
+				// as FlowEClassGroup should react to data changes?
+				// Wait, FlowEClassGroup receives `data`. We need to update `data` to trigger reactivity in the component?
+				// Or we can just update the style prop if we want to override colors.
+
+				// Actually, FlowEClassGroup uses `data.color`.
+				// If we want to highlight, we should probably update `data`.
+				// But Svelte Flow nodes are reactive.
+
+				// Let's stick to the previous approach of updating style for now,
+				// BUT FlowEClassGroup uses CSS variables from style attribute?
+				// No, it uses style:--color={data.color}.
+
+				// If we want to change the border color on selection, we should update data.
+				// Or we can just let the component handle selection state if we pass it?
+				// But selection state is global in interactionStore.
+
+				// Let's update `data` in the node.
 
 				const isCluster = node.id.startsWith("class-");
 				const eclassId = node.data?.eclassId;
@@ -255,47 +270,29 @@
 				}
 
 				if (isCluster) {
-					const baseColor = node.data.color || "#999";
-					const baseBg =
-						node.data.lightColor || "rgba(240, 240, 240, 0.5)";
+					// We need to clone data to trigger update
+					const newData = { ...node.data };
 
-					let borderColor = baseColor;
-					let borderWidth = "2px";
-					let bg = baseBg;
-					let boxShadow = "none";
+					const baseColor = newData.color || "#999";
+					// We can't easily change the color prop without losing the original.
+					// But we can add an override.
 
 					if (isSelected) {
-						borderColor = "#2563eb";
-						borderWidth = "3px";
-						bg = "rgba(37, 99, 235, 0.1)";
-						boxShadow = "0 0 0 4px rgba(37, 99, 235, 0.2)";
+						newData.color = "#2563eb";
+						newData.lightColor = "rgba(37, 99, 235, 0.1)";
 					} else if (isHovered) {
-						borderColor = "#60a5fa";
-						borderWidth = "3px";
+						newData.color = "#60a5fa";
+					} else {
+						// Reset to original (stored where? we don't store original in a separate field)
+						// We need to re-fetch color from ID.
+						newData.color = getColorForId(eclassId);
+						newData.lightColor = getLightColorForId(eclassId);
 					}
 
-					// Reconstruct style string (hacky but works for now)
-					// We preserve width/height
-					const widthMatch = style.match(/width: [^;]+;/);
-					const heightMatch = style.match(/height: [^;]+;/);
-					const w = widthMatch ? widthMatch[0] : "";
-					const h = heightMatch ? heightMatch[0] : "";
-
-					style = `${w} ${h} background: ${bg}; border: ${borderWidth} dashed ${borderColor}; border-radius: 8px; transition: all 0.2s; color: ${baseColor}; font-weight: bold; box-shadow: ${boxShadow};`;
-				}
-				// For ENodes, we don't update style here because the component handles it.
-				// UNLESS we need to handle transition mode for them too?
-				// ENode component can subscribe to transitionMode.
-
-				// Handle transition mode for clusters
-				if ($mode === "instant" && isCluster) {
-					style = style.replace(
-						"transition: all 0.2s;",
-						"transition: none;",
-					);
+					return { ...node, data: newData };
 				}
 
-				return { ...node, style };
+				return node;
 			});
 		});
 	}
@@ -305,6 +302,7 @@
 	<SvelteFlow
 		nodes={$nodes}
 		edges={$edges}
+		{nodeTypes}
 		fitView
 		minZoom={0.1}
 		onnodeclick={handleNodeClick}
