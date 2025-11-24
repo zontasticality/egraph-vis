@@ -1,8 +1,32 @@
 <script lang="ts">
 	import { currentState } from "../stores/timelineStore";
+	import { interactionStore } from "../stores/interactionStore";
+	import { getColorForId, getLightColorForId } from "../utils/colors";
 
 	// Simple tabs
 	let activeTab = "eclasses";
+
+	// Interaction helpers
+	function selectEClass(id: number | string) {
+		interactionStore.select({ type: "eclass", id });
+	}
+
+	function hoverEClass(id: number | string) {
+		interactionStore.hover({ type: "eclass", id });
+	}
+
+	function clearHover() {
+		interactionStore.clearHover();
+	}
+
+	// Helper to check if an item is selected or hovered
+	$: isSelected = (id: number | string) =>
+		$interactionStore.selection?.type === "eclass" &&
+		$interactionStore.selection.id === id;
+
+	$: isHovered = (id: number | string) =>
+		$interactionStore.hover?.type === "eclass" &&
+		$interactionStore.hover.id === id;
 </script>
 
 <div class="state-pane">
@@ -30,9 +54,30 @@
 					<h3>E-Classes ({$currentState.eclasses.length})</h3>
 					<div class="list">
 						{#each $currentState.eclasses as eclass}
-							<div class="item">
+							<!-- svelte-ignore a11y-click-events-have-key-events -->
+							<div
+								class="item"
+								class:selected={isSelected(eclass.id)}
+								class:hovered={isHovered(eclass.id)}
+								on:click={() => selectEClass(eclass.id)}
+								on:mouseenter={() => hoverEClass(eclass.id)}
+								on:mouseleave={clearHover}
+								role="button"
+								tabindex="0"
+								style="border-left-color: {getColorForId(
+									eclass.id,
+								)}; border-left-width: 4px;"
+							>
 								<div class="header">
-									<span class="id">ID: {eclass.id}</span>
+									<div class="id-group">
+										<div
+											class="diamond-indicator"
+											style="background-color: {getColorForId(
+												eclass.id,
+											)}"
+										></div>
+										<span class="id">ID: {eclass.id}</span>
+									</div>
 									{#if eclass.inWorklist}
 										<span class="badge">Dirty</span>
 									{/if}
@@ -76,9 +121,39 @@
 						</thead>
 						<tbody>
 							{#each $currentState.unionFind as entry}
-								<tr class:canonical={entry.isCanonical}>
-									<td>{entry.id}</td>
-									<td>{entry.canonical}</td>
+								<tr
+									class:canonical={entry.isCanonical}
+									class:selected={isSelected(entry.id)}
+									class:hovered={isHovered(entry.id)}
+									on:click={() => selectEClass(entry.id)}
+									on:mouseenter={() => hoverEClass(entry.id)}
+									on:mouseleave={clearHover}
+									style="cursor: pointer;"
+								>
+									<td>
+										<span
+											class="id-pill"
+											style="background-color: {getLightColorForId(
+												entry.id,
+											)}; color: {getColorForId(
+												entry.id,
+											)}"
+										>
+											{entry.id}
+										</span>
+									</td>
+									<td>
+										<span
+											class="id-pill"
+											style="background-color: {getLightColorForId(
+												entry.canonical,
+											)}; color: {getColorForId(
+												entry.canonical,
+											)}"
+										>
+											{entry.canonical}
+										</span>
+									</td>
 									<td
 										>{entry.isCanonical
 											? "Representative"
@@ -99,7 +174,20 @@
 							<div class="empty-list">Empty</div>
 						{:else}
 							{#each $currentState.worklist as id}
-								<div class="item simple">
+								<!-- svelte-ignore a11y-click-events-have-key-events -->
+								<div
+									class="item simple"
+									class:selected={isSelected(id)}
+									class:hovered={isHovered(id)}
+									on:click={() => selectEClass(id)}
+									on:mouseenter={() => hoverEClass(id)}
+									on:mouseleave={clearHover}
+									role="button"
+									tabindex="0"
+									style="border-left-color: {getColorForId(
+										id,
+									)}; border-left-width: 4px;"
+								>
 									<span class="id">Class {id}</span>
 								</div>
 							{/each}
@@ -168,6 +256,23 @@
 		border-radius: 6px;
 		padding: 0.75rem;
 		background: #fff;
+		cursor: pointer;
+		transition: all 0.2s;
+	}
+
+	.item:hover {
+		border-color: #93c5fd;
+	}
+
+	.item.selected {
+		border-color: #2563eb;
+		background: #eff6ff;
+		box-shadow: 0 0 0 1px #2563eb;
+	}
+
+	.item.hovered {
+		border-color: #60a5fa;
+		background: #f0f9ff;
 	}
 
 	.item.simple {
@@ -178,6 +283,19 @@
 		display: flex;
 		justify-content: space-between;
 		margin-bottom: 0.5rem;
+		align-items: center;
+	}
+
+	.id-group {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
+	.diamond-indicator {
+		width: 10px;
+		height: 10px;
+		transform: rotate(45deg);
 	}
 
 	.id {
@@ -238,6 +356,21 @@
 
 	.data-table tr.canonical {
 		background: #f0fdfa;
+	}
+
+	.data-table tr.selected {
+		background: #eff6ff;
+	}
+
+	.data-table tr.hovered {
+		background: #f0f9ff;
+	}
+
+	.id-pill {
+		padding: 2px 6px;
+		border-radius: 999px;
+		font-weight: 600;
+		font-size: 0.85rem;
 	}
 
 	.empty {
