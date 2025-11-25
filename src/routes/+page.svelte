@@ -27,12 +27,6 @@
                 enabled: true,
             },
             {
-                name: "div-to-shift",
-                lhs: { op: "/", args: ["?x", "2"] },
-                rhs: { op: ">>", args: ["?x", "1"] },
-                enabled: true,
-            },
-            {
                 name: "cancel-div",
                 lhs: { op: "/", args: ["?x", "?x"] },
                 rhs: "1",
