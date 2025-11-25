@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { currentState } from "../stores/timelineStore";
 	import ENode from "./ENode.svelte";
+	import type { EClassViewModel } from "../engine/types";
 
 	// Helper to get hashcons entries from state
 	$: hashconsEntries = $currentState?.nodeChunks
@@ -11,6 +12,21 @@
 	// Since nodeChunks is chunked, we can iterate chunks.
 	// But for the UI list we need a flat array or we can iterate chunks in the template.
 	// Let's iterate chunks in template to avoid copy.
+	// Group E-Classes by Canonical ID for the view
+	$: sets = (() => {
+		const map = new Map<number, EClassViewModel[]>();
+		if (!$currentState) return map;
+
+		for (const eclass of $currentState.eclasses) {
+			const canonicalId =
+				$currentState.unionFind[eclass.id]?.canonical ?? eclass.id;
+			if (!map.has(canonicalId)) {
+				map.set(canonicalId, []);
+			}
+			map.get(canonicalId)!.push(eclass);
+		}
+		return map;
+	})();
 </script>
 
 <div class="state-pane">
@@ -46,81 +62,88 @@
 			<section>
 				<h3>E-Classes ({$currentState.eclasses.length})</h3>
 				<div class="eclass-list">
-					{#each $currentState.eclasses as eclass}
-						<div class="eclass-card">
-							<div class="card-header">
-								<ENode id={eclass.id} mode="id" />
-								{#if eclass.inWorklist}
-									<span class="badge dirty">Dirty</span>
-								{/if}
+					{#each [...sets.entries()] as [canonicalId, eclasses]}
+						<div class="set-group">
+							<div class="set-header">
+								<span class="set-label">Set</span>
+								<ENode id={canonicalId} mode="id" />
 							</div>
-							<div class="card-body">
-								{#each eclass.nodes as node}
-									<!-- We need the ID of this specific node to render it as a symbol properly 
-                                         if we want to use the ENode component's symbol mode lookup.
-                                         However, eclass.nodes only contains {op, args}, not the original ID.
-                                         The ENode component in 'symbol' mode looks up by ID.
-                                         
-                                         PROBLEM: We don't have the original ID of the nodes inside the E-Class here.
-                                         The EGraphState.eclasses view model just has the structure.
-                                         
-                                         SOLUTION: We should probably update EClassViewModel to include the original ID of the nodes?
-                                         OR we can just render the structure manually using ENode for args.
-                                         
-                                         Let's use ENode for args (ID mode) and render the op manually here, 
-                                         since ENode component expects an ID for symbol lookup.
-                                         Unless we allow passing `node` prop to ENode component?
-                                         
-                                         Wait, I removed the `node` prop from the spec in favor of ID lookup.
-                                         But here we have the structure but not the ID.
-                                         
-                                         Actually, if we want to highlight the *specific* node in the Hashcons view when hovering this,
-                                         we need its ID.
-                                         
-                                         So `EClassViewModel` should probably store `{ id, op, args }`.
-                                         Let's check types.ts.
-                                         
-                                         Current types.ts:
-                                         nodes: Array<{ op: string; args: number[] }>;
-                                         
-                                         I should update types.ts to include `id` in `nodes`.
-                                         For now, I will render it manually to unblock, but I'll add a TODO.
-                                    -->
-									<div class="node-row">
-										<span class="op">{node.op}</span>
-										<span class="args">
-											{#if node.args.length > 0}
-												<span class="paren">(</span>
-												{#each node.args as argId, i}
-													<ENode
-														id={argId}
-														mode="id"
-													/>
-													{#if i < node.args.length - 1}<span
-															class="comma"
-															>,</span
-														>{/if}
-												{/each}
-												<span class="paren">)</span>
+							<div class="set-body">
+								{#each eclasses as eclass}
+									{@const isCanonical =
+										eclass.id === canonicalId}
+									<div
+										class="eclass-card"
+										class:merged={!isCanonical}
+									>
+										<div class="card-header">
+											<div class="header-left">
+												<ENode
+													id={eclass.id}
+													mode="id"
+												/>
+												{#if !isCanonical}
+													<span class="badge merged"
+														>Merged</span
+													>
+												{/if}
+											</div>
+											{#if eclass.inWorklist}
+												<span class="badge dirty"
+													>Dirty</span
+												>
 											{/if}
-										</span>
+										</div>
+										<div class="card-body">
+											{#each eclass.nodes as node}
+												<div class="node-row">
+													<span class="op"
+														>{node.op}</span
+													>
+													<span class="args">
+														{#if node.args.length > 0}
+															<span class="paren"
+																>(</span
+															>
+															{#each node.args as argId, i}
+																<ENode
+																	id={argId}
+																	mode="id"
+																/>
+																{#if i < node.args.length - 1}<span
+																		class="comma"
+																		>,</span
+																	>{/if}
+															{/each}
+															<span class="paren"
+																>)</span
+															>
+														{/if}
+													</span>
+												</div>
+											{/each}
+										</div>
+										{#if eclass.parents.length > 0}
+											<div class="card-footer">
+												<span class="label"
+													>Parents:</span
+												>
+												{#each eclass.parents as parent}
+													<div class="parent-ref">
+														<span class="op"
+															>{parent.op}</span
+														>
+														<ENode
+															id={parent.parentId}
+															mode="id"
+														/>
+													</div>
+												{/each}
+											</div>
+										{/if}
 									</div>
 								{/each}
 							</div>
-							{#if eclass.parents.length > 0}
-								<div class="card-footer">
-									<span class="label">Parents:</span>
-									{#each eclass.parents as parent}
-										<div class="parent-ref">
-											<span class="op">{parent.op}</span>
-											<ENode
-												id={parent.parentId}
-												mode="id"
-											/>
-										</div>
-									{/each}
-								</div>
-							{/if}
 						</div>
 					{/each}
 				</div>
@@ -203,7 +226,35 @@
 	.eclass-list {
 		display: flex;
 		flex-direction: column;
-		gap: 1rem;
+		gap: 1.5rem;
+	}
+
+	.set-group {
+		border: 1px dashed #cbd5e1;
+		border-radius: 12px;
+		padding: 1rem;
+		background: #f8fafc;
+	}
+
+	.set-header {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+		margin-bottom: 1rem;
+		font-weight: 600;
+		color: #475569;
+	}
+
+	.set-label {
+		font-size: 0.85rem;
+		text-transform: uppercase;
+		letter-spacing: 0.05em;
+	}
+
+	.set-body {
+		display: flex;
+		flex-direction: column;
+		gap: 0.75rem;
 	}
 
 	.eclass-card {
@@ -212,6 +263,16 @@
 		padding: 0.75rem;
 		background: #fff;
 		box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+	}
+
+	/* Merged (Non-Canonical) Styling */
+	.eclass-card.merged {
+		border-color: #fca5a5; /* Red 300 */
+		background: #fef2f2; /* Red 50 */
+	}
+
+	.eclass-card.merged .card-header {
+		border-bottom-color: #fee2e2;
 	}
 
 	.card-header {
@@ -223,9 +284,25 @@
 		border-bottom: 1px solid #f3f4f6;
 	}
 
+	.header-left {
+		display: flex;
+		align-items: center;
+		gap: 0.5rem;
+	}
+
 	.badge.dirty {
 		background: #fee2e2;
 		color: #991b1b;
+		font-size: 0.7rem;
+		padding: 2px 6px;
+		border-radius: 4px;
+		text-transform: uppercase;
+		font-weight: bold;
+	}
+
+	.badge.merged {
+		background: #fee2e2;
+		color: #dc2626;
 		font-size: 0.7rem;
 		padding: 2px 6px;
 		border-radius: 4px;

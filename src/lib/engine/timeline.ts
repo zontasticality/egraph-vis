@@ -1,6 +1,6 @@
 import { create } from 'mutative';
 import { EGraphRuntime } from './runtime';
-import { rebuild, collectMatches, applyMatches } from './algorithms';
+import { rebuild, collectMatches, applyMatches, applyMatchesGen, rebuildGen } from './algorithms';
 import type {
     EGraphEngine,
     EGraphTimeline,
@@ -48,35 +48,45 @@ export class TimelineEngine implements EGraphEngine {
         while (iteration < cap) {
             // 1. Read Phase
             const matches = collectMatches(this.runtime, this.getRewrites());
-            this.emitSnapshot('read');
+            this.emitSnapshot('read', matches);
 
             if (matches.length === 0) {
                 this.timeline.haltedReason = 'saturated';
                 break;
             }
 
-            // 2. Write Phase
-            applyMatches(this.runtime, matches, this.options.implementation);
+            // 2. Write Phase (Fine-Grained)
+            // In deferred mode, we apply all matches, then rebuild once
+            // In naive mode, applyMatchesGen will rebuild after each rewrite
+            const applyGen = applyMatchesGen(this.runtime, matches, this.options.implementation);
 
-            // Check for effective changes
-            // If applyMatches produced no diffs, it means all matches were redundant (already merged).
-            // We should stop to avoid infinite loops of "Find Match -> No-op -> Snapshot".
-            if (this.runtime.diffs.length === 0) {
+            let hasChanges = false;
+            for (const _step of applyGen) {
+                hasChanges = true;
+                this.emitSnapshot('write', matches);
+
+                // In naive mode, rebuild after each rewrite
+                if (this.options.implementation === 'naive') {
+                    const rebuildIterator = rebuildGen(this.runtime);
+                    for (const _rebuildStep of rebuildIterator) {
+                        this.emitSnapshot('rebuild', matches);
+                    }
+                }
+            }
+
+            if (!hasChanges) {
                 this.timeline.haltedReason = 'saturated';
-                // We still emit the 'read' snapshot that happened before this, 
-                // but we don't emit a 'write' snapshot because nothing changed.
-                // Actually, we already emitted 'read'.
                 break;
             }
 
-            this.emitSnapshot('write');
-
-            // 3. Rebuild Phase
-            // 3. Rebuild Phase
-            // In both naive and deferred modes, we need to restore invariants (congruence).
-            // Our `rebuild` function handles this using the worklist populated during merge.
-            rebuild(this.runtime);
-            this.emitSnapshot('rebuild');
+            // 3. Rebuild Phase (Fine-Grained, only for deferred mode)
+            // Naive mode already rebuilt during applyMatchesGen
+            if (this.options.implementation === 'deferred') {
+                const rebuildIterator = rebuildGen(this.runtime);
+                for (const _step of rebuildIterator) {
+                    this.emitSnapshot('rebuild', matches);
+                }
+            }
 
             iteration++;
         }
@@ -84,7 +94,7 @@ export class TimelineEngine implements EGraphEngine {
         if (iteration >= cap) {
             this.timeline.haltedReason = 'iteration-cap';
         } else if (!this.timeline.haltedReason) {
-            this.timeline.haltedReason = 'saturated'; // Default if loop finishes
+            this.timeline.haltedReason = 'saturated';
         }
 
         this.emitSnapshot('done');
@@ -227,7 +237,12 @@ export class TimelineEngine implements EGraphEngine {
             // 5. Metadata
             draft.metadata = {
                 diffs: [...this.runtime.diffs], // Copy current diffs
-                matches: matches.map(m => ({ rule: m.rule, nodes: m.nodes })), // Copy matches
+                matches: matches.map(m => {
+                    // Extract node IDs from the matched class
+                    const eclass = this.runtime.eclasses.get(m.eclassId);
+                    const nodes = eclass ? eclass.nodes : [];
+                    return { rule: m.rule.name, nodes };
+                }),
                 invariants: {
                     congruenceValid: this.runtime.worklist.size === 0,
                     hashconsValid: true // Assumed true for now

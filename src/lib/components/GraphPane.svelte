@@ -18,11 +18,13 @@
 
 	import ENode from "./ENode.svelte";
 	import FlowENode from "./FlowENode.svelte"; // I will create this next
+	import FlowUnionFindGroup from "./FlowUnionFindGroup.svelte";
 	import FlowEClassGroup from "./FlowEClassGroup.svelte";
 
 	const nodeTypes = {
 		enode: FlowENode,
 		eclassGroup: FlowEClassGroup,
+		unionFindGroup: FlowUnionFindGroup,
 	};
 
 	// --- State ---
@@ -80,41 +82,91 @@
 		const nodeHeight = 40;
 		const clusterPadding = 20;
 
-		for (const eclass of state.eclasses) {
-			const children: any[] = [];
-			const color = getColorForId(eclass.id);
-			const lightColor = getLightColorForId(eclass.id);
+		// Group E-Classes by Canonical ID (Union-Find Set)
+		const sets = new Map<number, typeof state.eclasses>();
 
-			eclass.nodes.forEach((enode, index) => {
-				const nodeId = `node-${enode.id}`; // Use actual Node ID for stability
-				children.push({
-					id: nodeId,
-					width: nodeWidth,
-					height: nodeHeight,
-					labels: [{ text: enode.op }], // Fallback label
+		for (const eclass of state.eclasses) {
+			// Find canonical ID from UnionFind array
+			// Note: state.unionFind is an array where index = id
+			const canonicalId =
+				state.unionFind[eclass.id]?.canonical ?? eclass.id;
+
+			if (!sets.has(canonicalId)) {
+				sets.set(canonicalId, []);
+			}
+			sets.get(canonicalId)!.push(eclass);
+		}
+
+		// Create ELK Nodes for Sets and Classes
+		for (const [canonicalId, eclasses] of sets) {
+			const setChildren: any[] = [];
+
+			for (const eclass of eclasses) {
+				const classChildren: any[] = [];
+				const isCanonical = eclass.id === canonicalId;
+
+				// Determine styling based on canonical status
+				// Non-canonical (merged) classes get Red styling
+				let color = getColorForId(eclass.id);
+				let lightColor = getLightColorForId(eclass.id);
+
+				if (!isCanonical) {
+					// Red for merged/dirty classes
+					color = "#ef4444"; // Red 500
+					lightColor = "rgba(239, 68, 68, 0.1)";
+				}
+
+				eclass.nodes.forEach((enode, index) => {
+					const nodeId = `node-${enode.id}`;
+					classChildren.push({
+						id: nodeId,
+						width: nodeWidth,
+						height: nodeHeight,
+						labels: [{ text: enode.op }],
+						data: {
+							id: enode.id,
+							mode: "symbol",
+							eclassId: eclass.id,
+							color: color,
+						},
+					});
+				});
+
+				setChildren.push({
+					id: `class-${eclass.id}`,
+					children: classChildren,
+					layoutOptions: {
+						"elk.algorithm": "layered",
+						"elk.direction": "DOWN",
+						"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`,
+						"elk.spacing.nodeNode": "10",
+					},
+					labels: [{ text: `ID: ${eclass.id}` }],
 					data: {
-						id: enode.id, // Pass ID to FlowENode
-						mode: "symbol",
 						eclassId: eclass.id,
 						color: color,
+						lightColor: lightColor,
+						isCanonical: isCanonical,
 					},
 				});
-			});
+			}
 
+			// Create the Union-Find Group Node
 			elkNodes.push({
-				id: `class-${eclass.id}`,
-				children: children,
+				id: `set-${canonicalId}`,
+				children: setChildren,
 				layoutOptions: {
 					"elk.algorithm": "layered",
 					"elk.direction": "DOWN",
-					"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`,
-					"elk.spacing.nodeNode": "10",
+					"elk.padding": `[top=40,left=20,bottom=20,right=20]`,
+					"elk.spacing.nodeNode": "20", // Spacing between merged classes
+					"elk.nodeSize.constraints":
+						"NODE_LABELS PORTS MINIMUM_SIZE",
+					"elk.nodeSize.minimum": "(100,100)",
 				},
-				labels: [{ text: `ID: ${eclass.id}` }],
+				labels: [{ text: `${canonicalId}` }],
 				data: {
-					eclassId: eclass.id,
-					color: color,
-					lightColor: lightColor,
+					label: `${canonicalId}`,
 				},
 			});
 		}
@@ -125,7 +177,12 @@
 				const sourceId = `node-${enode.id}`;
 
 				enode.args.forEach((argClassId, argIndex) => {
-					const targetId = `class-${argClassId}`;
+					// Edges point to the SET (Canonical Group), not the specific class
+					// This simplifies the graph and shows logical flow
+					const canonicalArgId =
+						state.unionFind[argClassId]?.canonical ?? argClassId;
+					const targetId = `set-${canonicalArgId}`;
+
 					elkEdges.push({
 						id: `edge-${edgeId++}`,
 						sources: [sourceId],
@@ -156,11 +213,17 @@
 			const newEdges: Edge[] = [];
 
 			function traverse(node: any, parentId?: string) {
-				const isCluster = node.id.startsWith("class-");
+				const isSet = node.id.startsWith("set-");
+				const isClass = node.id.startsWith("class-");
+				const isEnode = node.id.startsWith("node-");
+
+				let type = "enode";
+				if (isSet) type = "unionFindGroup";
+				else if (isClass) type = "eclassGroup";
 
 				const flowNode: Node = {
 					id: node.id,
-					type: isCluster ? "eclassGroup" : "enode", // Use custom types
+					type: type,
 					position: { x: node.x, y: node.y },
 					data: {
 						label: node.labels?.[0]?.text || "",
@@ -170,12 +233,11 @@
 					},
 					style: `width: ${node.width}px; height: ${node.height}px;`,
 					parentId: parentId,
-					extent: isCluster ? "parent" : undefined,
+					extent: parentId ? "parent" : undefined, // All nodes with parents should be constrained
 					draggable: false,
 				};
 
 				// Styles are now handled by the components based on data
-				// We just ensure the wrapper is transparent/sized correctly
 				flowNode.style +=
 					"background: transparent; border: none; padding: 0;";
 
@@ -200,13 +262,11 @@
 						target: edge.targets[0],
 						type: "smoothstep",
 						animated: false,
-						// label: edge.labels?.[0]?.text, // Removed label
 						style: "stroke: #b1b1b7;",
 						markerEnd: {
 							type: MarkerType.ArrowClosed,
 							color: "#b1b1b7",
 						},
-						// targetHandle: null, // No longer needed as we have a default handle
 					});
 				});
 			}
@@ -282,11 +342,12 @@
 						newData.lightColor = "rgba(37, 99, 235, 0.1)";
 					} else if (isHovered) {
 						newData.color = "#60a5fa";
-					} else {
 						// Reset to original (stored where? we don't store original in a separate field)
 						// We need to re-fetch color from ID.
-						newData.color = getColorForId(eclassId);
-						newData.lightColor = getLightColorForId(eclassId);
+						if (typeof eclassId === "number") {
+							newData.color = getColorForId(eclassId);
+							newData.lightColor = getLightColorForId(eclassId);
+						}
 					}
 
 					return { ...node, data: newData };

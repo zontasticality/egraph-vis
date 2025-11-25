@@ -102,7 +102,7 @@ export class EGraphRuntime {
         return id;
     }
 
-    merge(a: ENodeId, b: ENodeId): ENodeId {
+    merge(a: ENodeId, b: ENodeId, implementation: 'naive' | 'deferred' = 'naive'): ENodeId {
         const rootA = this.find(a);
         const rootB = this.find(b);
 
@@ -129,34 +129,39 @@ export class EGraphRuntime {
             }
         }
 
-        // Merge nodes
-        winnerClass.nodes.push(...loserClass.nodes);
-
-        // Merge parents
-        for (const [key, parentInfo] of loserClass.parents) {
-            winnerClass.parents.set(key, parentInfo);
-        }
-
-        winnerClass.version++;
-
-        // Merge data (if any) - simple overwrite for now, spec doesn't specify merge strategy for data
-        if (loserClass.data) {
-            winnerClass.data = { ...winnerClass.data, ...loserClass.data };
-        }
-
-        // Update hashcons for nodes moving to winner
+        // Update hashcons for nodes in loser class (they now belong to winner canonically)
         for (const nodeId of loserClass.nodes) {
             const node = this.nodes[nodeId]; // Look up node from registry
             const key = this.canonicalKey(node);
             this.hashcons.set(key, winner);
         }
 
+        // Merge parents (logical merge)
+        for (const [key, parentInfo] of loserClass.parents) {
+            winnerClass.parents.set(key, parentInfo);
+        }
+
+        // In Deferred Mode, we STOP here for the physical merge.
+        // We leave the nodes in 'loser' and 'loser' in 'eclasses'.
+        // We will compact them in 'rebuild()'.
+        if (implementation === 'deferred') {
+            this.worklist.add(winner);
+            return winner;
+        }
+
+        // --- Naive Mode (Eager Merge) ---
+
+        // Merge nodes
+        winnerClass.nodes.push(...loserClass.nodes);
+
+        // Merge data (if any) - simple overwrite for now
+        if (loserClass.data) {
+            winnerClass.data = { ...winnerClass.data, ...loserClass.data };
+        }
+
         this.eclasses.delete(loser);
         this.diffs.push({ type: 'merge', winner, losers: [loser] });
 
-        // In deferred mode, we'll add to worklist in the algorithms layer or here?
-        // OPERATIONS.md says: "Deferred: merge pushes canonical id into worklist Set."
-        // It's safer to always add to worklist here, and naive mode just ignores it or clears it.
         this.worklist.add(winner);
 
         return winner;

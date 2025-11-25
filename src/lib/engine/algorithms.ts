@@ -10,6 +10,45 @@ export interface Match {
 // --- Rebuild / Restoration ---
 
 export function rebuild(runtime: EGraphRuntime) {
+    // 1. Compaction Pass (For Deferred Mode Visualization)
+    // In deferred mode, we skipped moving nodes during merge.
+    // We must now move them to the canonical class before repairing invariants.
+
+    // Collect all IDs first to avoid iterator invalidation during deletion
+    const allIds = Array.from(runtime.eclasses.keys());
+
+    for (const id of allIds) {
+        const eclass = runtime.eclasses.get(id);
+        if (!eclass) continue; // Already deleted
+
+        const canonicalId = runtime.find(id);
+        if (id !== canonicalId) {
+            // This is a "stale" class (Red Box).
+            // Move its nodes to the canonical class (Normal Box).
+            const canonicalClass = runtime.eclasses.get(canonicalId);
+            if (canonicalClass) {
+                canonicalClass.nodes.push(...eclass.nodes);
+                // We don't need to update hashcons here because we did it in merge()
+
+                // Merge parents (if any were added after merge? unlikely but safe)
+                for (const [key, parentInfo] of eclass.parents) {
+                    canonicalClass.parents.set(key, parentInfo);
+                }
+
+                // Merge data
+                if (eclass.data) {
+                    canonicalClass.data = { ...canonicalClass.data, ...eclass.data };
+                }
+
+                // Update version to trigger ViewModel refresh
+                canonicalClass.version++;
+            }
+            // Delete the stale class
+            runtime.eclasses.delete(id);
+        }
+    }
+
+    // 2. Standard Congruence Repair
     // Loop until fixpoint (worklist empty)
     while (runtime.worklist.size > 0) {
         const todo = Array.from(runtime.worklist);
@@ -22,6 +61,7 @@ export function rebuild(runtime: EGraphRuntime) {
 }
 
 function repair(runtime: EGraphRuntime, eclassId: ENodeId) {
+    // ... (rest of repair is unchanged)
     // 1. Gather parents that reference this eclass
     // Note: parents map in runtime stores { parentId, enode }
     // The 'enode' there is the *old* version. We need to re-canonicalize it.
@@ -56,7 +96,11 @@ function repair(runtime: EGraphRuntime, eclassId: ENodeId) {
 
         // Merge all others into leader
         for (let i = 1; i < ids.length; i++) {
-            runtime.merge(leader, ids[i]);
+            runtime.merge(leader, ids[i]); // Always eager here? Or recursive deferred?
+            // Rebuild is always eager in its internal merges to ensure termination/progress.
+            // If we used deferred merge here, we'd just add to worklist and loop forever?
+            // Actually, `runtime.merge` defaults to 'naive' (eager).
+            // So internal merges in rebuild are eager, which is correct.
         }
 
         // Update hashcons to point to the leader
@@ -65,167 +109,196 @@ function repair(runtime: EGraphRuntime, eclassId: ENodeId) {
     }
 }
 
+// ...
+
 // --- Matching ---
 
 export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Match[] {
     const matches: Match[] = [];
-
     for (const rule of rules) {
-        if (!rule.enabled) continue;
-
-        // Iterate over all *canonical* eclasses
         for (const [id, eclass] of runtime.eclasses) {
-            // Optimization: only match against the representative
-            if (runtime.find(id) !== id) continue;
-
-            // Try to match the LHS pattern against any node in this class
-            // A class matches if ANY of its nodes matches
-            for (const nodeId of eclass.nodes) {
-                const node = runtime.nodes[nodeId];
-                const subst = matchPattern(runtime, rule.lhs, node);
-                if (subst) {
-                    matches.push({ rule, eclassId: id, substitution: subst });
-                }
+            const found = matchPattern(runtime, rule.lhs, id);
+            for (const substitution of found) {
+                matches.push({ rule, eclassId: id, substitution });
             }
         }
     }
-
-    return deduplicateMatches(matches);
+    return matches;
 }
 
-function deduplicateMatches(matches: Match[]): Match[] {
-    const unique = new Set<string>();
-    const result: Match[] = [];
-
-    for (const m of matches) {
-        // Key: ruleName + eclass + sorted_subst
-        const substKey = Array.from(m.substitution.entries())
-            .sort((a, b) => a[0].localeCompare(b[0]))
-            .map(([k, v]) => `${k}=${v}`)
-            .join(',');
-        const key = `${m.rule.name}:${m.eclassId}:${substKey}`;
-
-        if (!unique.has(key)) {
-            unique.add(key);
-            result.push(m);
+function matchPattern(runtime: EGraphRuntime, pattern: Pattern | number, eclassId: ENodeId): Map<string, ENodeId>[] {
+    // 1. Concrete ID Match
+    if (typeof pattern === 'number') {
+        // If pattern is a number, it must match the eclassId?
+        // Or does it match if the eclass contains that node?
+        // Usually in e-graphs, patterns don't contain concrete IDs unless it's a specific reference.
+        // If pattern is a number, it means "match this specific EClass".
+        // So if eclassId === pattern (canonical), it's a match.
+        if (runtime.find(eclassId) === runtime.find(pattern)) {
+            return [new Map()];
         }
+        return [];
     }
-    return result;
+
+    // 2. Variable Match
+    if (typeof pattern === 'string' && pattern.startsWith('?')) {
+        return [new Map([[pattern, eclassId]])];
+    }
+
+    // 3. Structure Match
+    const eclass = runtime.eclasses.get(eclassId);
+    if (!eclass) return [];
+
+    const results: Map<string, ENodeId>[] = [];
+
+    for (const nodeId of eclass.nodes) {
+        const node = runtime.nodes[nodeId];
+        const substs = matchNode(runtime, pattern, node);
+        results.push(...substs);
+    }
+
+    return results;
 }
 
-function matchPattern(
-    runtime: EGraphRuntime,
-    pattern: Pattern,
-    enode: ENode,
-    subst: Map<string, ENodeId> = new Map()
-): Map<string, ENodeId> | null {
-    const newSubst = new Map(subst);
-
+function matchNode(runtime: EGraphRuntime, pattern: Pattern, node: ENode): Map<string, ENodeId>[] {
     if (typeof pattern === 'string') {
-        if (pattern.startsWith('?')) {
-            // Variable
-            if (newSubst.has(pattern)) {
-                if (newSubst.get(pattern) !== runtime.find(runtime.addEnode(enode))) {
-                    return null;
-                }
-            } else {
-                // Note: We cannot easily bind a variable to a class ID here because we only have the ENode.
-                // However, matchPattern is typically called recursively.
-                // For the root pattern, the caller handles binding if necessary, or we assume the variable matches the class.
-                // But wait, if the pattern IS just a variable "?x", it matches anything.
-                // The issue is we don't know the Class ID of `enode` here to bind it.
-                // This case (root pattern is variable) should be handled by the caller or passed in context.
-                // For now, we assume this function is primarily for checking structure.
-                // If we are here, it means we are matching a variable against a node.
-                // This implies the variable binds to the class containing this node.
-                // But we don't have the class ID.
-                // In `collectMatches`, we iterate classes.
-                // If the rule is just "?x", it matches every class.
-                // This specific function `matchPattern` might need refactoring if we want to support root variables fully
-                // without passing class ID.
-                // For now, we'll return null if we can't verify.
-                // But actually, if pattern is string, we handled it above?
-                // Wait, lines 135-173 handle string pattern.
-                return null;
-            }
-        } else {
-            // Literal string
-            if (enode.op === pattern && enode.args.length === 0) return newSubst;
-            return null;
+        // Constant string "foo" -> matches node with op "foo", args []
+        if (node.op === pattern && node.args.length === 0) {
+            return [new Map()];
         }
-    } else {
-        // 1. Check operator
-        if (pattern.op !== enode.op) {
-            return null;
-        }
-
-        // 2. Check arity
-        if (pattern.args.length !== enode.args.length) {
-            return null;
-        }
-
-        for (let i = 0; i < pattern.args.length; i++) {
-            const patArg = pattern.args[i];
-            const nodeArgId = runtime.find(enode.args[i]); // Canonicalize!
-
-            // Recursive match?
-            // If patArg is simple (string/number), we check it.
-            // If patArg is nested Pattern, we check if class `nodeArgId` matches.
-
-            if (typeof patArg === 'string') {
-                if (patArg.startsWith('?')) {
-                    if (newSubst.has(patArg)) {
-                        // Check consistency: variable must map to same eclass
-                        if (newSubst.get(patArg) !== nodeArgId) {
-                            return null;
-                        }
-                    } else {
-                        // Bind variable
-                        newSubst.set(patArg, nodeArgId);
-                    }
-                } else {
-                    // Literal arg
-                    // Check if class `nodeArgId` has literal `patArg`
-                    const childClass = runtime.eclasses.get(nodeArgId);
-                    if (!childClass) return null;
-                    if (!childClass.nodes.some(id => {
-                        const n = runtime.nodes[id];
-                        return n.op === patArg && n.args.length === 0;
-                    })) {
-                        return null;
-                    }
-                }
-            } else if (typeof patArg === 'number') {
-                if (patArg !== nodeArgId) {
-                    return null;
-                }
-            } else {
-                // Nested Pattern
-                const childClass = runtime.eclasses.get(nodeArgId);
-                if (!childClass) {
-                    return null;
-                }
-                let found = false;
-                for (const childId of childClass.nodes) {
-                    const childNode = runtime.nodes[childId];
-                    const res = matchPattern(runtime, patArg, childNode, newSubst);
-                    if (res) {
-                        for (const [k, v] of res) newSubst.set(k, v);
-                        found = true;
-                        break;
-                    }
-                }
-                if (!found) {
-                    return null;
-                }
-            }
-        }
-        return newSubst;
+        return [];
+    } else if (typeof pattern === 'number') {
+        return [];
     }
-    return null; // Should be unreachable
+
+    // Object pattern { op, args }
+    if (node.op !== pattern.op) return [];
+    if (node.args.length !== pattern.args.length) return [];
+
+    // Recursive match for args
+    let currentSubsts: Map<string, ENodeId>[] = [new Map()];
+
+    for (let i = 0; i < node.args.length; i++) {
+        const argPattern = pattern.args[i];
+        const argClassId = runtime.find(node.args[i]); // Canonicalize before matching
+
+        const nextSubsts: Map<string, ENodeId>[] = [];
+
+        // Find all matches for this argument
+        const argMatches = matchPattern(runtime, argPattern, argClassId);
+
+        // Cartesian product
+        for (const curr of currentSubsts) {
+            for (const argMatch of argMatches) {
+                const merged = mergeSubsts(curr, argMatch);
+                if (merged) {
+                    nextSubsts.push(merged);
+                }
+            }
+        }
+
+        currentSubsts = nextSubsts;
+        if (currentSubsts.length === 0) return [];
+    }
+
+    return currentSubsts;
 }
 
-// --- Applying Rewrites ---
+function mergeSubsts(a: Map<string, ENodeId>, b: Map<string, ENodeId>): Map<string, ENodeId> | null {
+    const merged = new Map(a);
+    for (const [varName, id] of b) {
+        if (merged.has(varName)) {
+            if (merged.get(varName) !== id) return null; // Conflict
+        } else {
+            merged.set(varName, id);
+        }
+    }
+    return merged;
+}
+
+// --- Generator Versions for Fine-Grained Snapshots ---
+
+export function* applyMatchesGen(
+    runtime: EGraphRuntime,
+    matches: Match[],
+    impl: 'naive' | 'deferred'
+): Generator<{ match: Match; phase: 'apply' | 'rebuild' }> {
+    for (const match of matches) {
+        const { rule, eclassId, substitution } = match;
+
+        // Instantiate RHS
+        const newId = instantiatePattern(runtime, rule.rhs, substitution);
+
+        // Merge with target
+        const target = runtime.find(eclassId);
+        const actualNewId = runtime.find(newId);
+
+        // Deduplication check
+        if (target === actualNewId) {
+            continue;
+        }
+
+        // Perform merge
+        runtime.merge(target, actualNewId, impl);
+
+        // Record rewrite diff
+        runtime.diffs.push({
+            type: 'rewrite',
+            rule: rule.name,
+            targetClass: target,
+            createdId: actualNewId,
+            mergedInto: runtime.find(target)
+        });
+
+        // Yield after each merge (this allows a snapshot to be taken)
+        yield { match, phase: 'apply' };
+
+        // In naive mode, rebuild will be called separately by TimelineEngine
+        // We don't delegate here to avoid complex type issues
+    }
+}
+
+export function* rebuildGen(runtime: EGraphRuntime): Generator<{ phase: 'compact' | 'repair'; eclassId?: number }> {
+    // 1. Compaction Pass
+    const allIds = Array.from(runtime.eclasses.keys());
+
+    for (const id of allIds) {
+        const eclass = runtime.eclasses.get(id);
+        if (!eclass) continue;
+
+        const canonicalId = runtime.find(id);
+        if (id !== canonicalId) {
+            const canonicalClass = runtime.eclasses.get(canonicalId);
+            if (canonicalClass) {
+                canonicalClass.nodes.push(...eclass.nodes);
+                for (const [key, parentInfo] of eclass.parents) {
+                    canonicalClass.parents.set(key, parentInfo);
+                }
+                if (eclass.data) {
+                    canonicalClass.data = { ...canonicalClass.data, ...eclass.data };
+                }
+                canonicalClass.version++;
+            }
+            runtime.eclasses.delete(id);
+
+            // Yield after each compaction
+            yield { phase: 'compact', eclassId: id };
+        }
+    }
+
+    // 2. Congruence Repair
+    while (runtime.worklist.size > 0) {
+        const todo = Array.from(runtime.worklist);
+        runtime.worklist.clear();
+
+        for (const eclassId of todo) {
+            repair(runtime, eclassId);
+
+            // Yield after each repair
+            yield { phase: 'repair', eclassId };
+        }
+    }
+}
 
 export function applyMatches(
     runtime: EGraphRuntime,
@@ -243,8 +316,6 @@ export function applyMatches(
         const actualNewId = runtime.find(newId);
 
         // Deduplication check:
-
-        // Deduplication check:
         // If the new node is ALREADY in the target class, merge returns the same ID and does nothing.
         // We can check this before calling merge to avoid recording a diff.
         if (target === actualNewId) {
@@ -253,7 +324,8 @@ export function applyMatches(
         }
 
         // Perform merge
-        runtime.merge(target, actualNewId);
+        // Pass implementation flag to support lazy merge in deferred mode
+        runtime.merge(target, actualNewId, impl);
 
         // In naive mode, we restore invariants immediately after every merge
         if (impl === 'naive') {
