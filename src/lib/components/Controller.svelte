@@ -8,11 +8,52 @@
         currentIndex,
         timeline,
         progress,
+        currentState,
     } from "../stores/timelineStore";
 
     $: current = $currentIndex;
     $: total = $timeline ? $timeline.states.length : 0;
     $: max = Math.max(0, total - 1);
+
+    // Phase descriptions for tooltips
+    const phaseDescriptions: Record<
+        string,
+        { label: string; description: string }
+    > = {
+        init: {
+            label: "Init",
+            description:
+                "Initial state: building the E-Graph from the root expression",
+        },
+        read: {
+            label: "Read",
+            description:
+                "Finding pattern matches: searching for applicable rewrite rules",
+        },
+        write: {
+            label: "Write",
+            description:
+                "Applying rewrites: creating new E-Nodes and merging E-Classes",
+        },
+        compact: {
+            label: "Compact",
+            description:
+                "Compacting E-Classes: moving nodes from non-canonical (red) classes to canonical classes",
+        },
+        repair: {
+            label: "Repair",
+            description:
+                "Repairing congruence: processing worklist to restore E-Graph invariants",
+        },
+        done: {
+            label: "Done",
+            description: "Saturation complete: no more rewrites applicable",
+        },
+    };
+
+    $: phaseInfo = $currentState
+        ? phaseDescriptions[$currentState.phase]
+        : null;
 </script>
 
 <div class="controller">
@@ -105,6 +146,8 @@
         </button>
     </div>
 
+    <span class="step-count">{current} / {max}</span>
+
     <div class="slider-container">
         <input
             type="range"
@@ -117,10 +160,12 @@
     </div>
 
     <div class="info">
-        <span class="step-count">{current} / {max}</span>
-        {#if $timeline}
-            <span class="phase-badge {$timeline.states[current]?.phase}">
-                {$timeline.states[current]?.phase}
+        {#if phaseInfo}
+            <span
+                class="phase-badge phase-{$currentState?.phase}"
+                title={phaseInfo.description}
+            >
+                {phaseInfo.label}
             </span>
         {/if}
     </div>
@@ -153,27 +198,7 @@
         background: white;
         color: #374151;
         cursor: pointer;
-        transition: all 0.2s;
-    }
-
-    .btn:hover:not(:disabled) {
-        background: #f3f4f6;
-        border-color: #9ca3af;
-    }
-
-    .btn:disabled {
-        opacity: 0.5;
-        cursor: not-allowed;
-    }
-
-    .btn.primary {
-        background: #2563eb;
-        border-color: #2563eb;
-        color: white;
-    }
-
-    .btn.primary:hover:not(:disabled) {
-        background: #1d4ed8;
+        align-items: center;
     }
 
     .slider-container {
@@ -187,47 +212,97 @@
         cursor: pointer;
     }
 
-    .info {
-        display: flex;
-        align-items: center;
-        gap: 0.75rem;
+    .step-count {
         font-family: monospace;
         font-size: 0.9rem;
         color: #4b5563;
-        min-width: 120px;
+        min-width: 70px;
+        text-align: right;
+    }
+
+    .info {
+        display: flex;
+        align-items: center;
+        min-width: 100px;
         justify-content: flex-end;
     }
 
     .phase-badge {
-        padding: 2px 6px;
+        padding: 3px 8px;
         border-radius: 4px;
         font-size: 0.75rem;
         text-transform: uppercase;
-        font-weight: bold;
+        font-weight: 600;
+        cursor: help;
+        transition: all 0.2s;
     }
 
-    .phase-badge.init {
+    .phase-badge:hover {
+        transform: scale(1.05);
+        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+    }
+
+    /* Phase-specific colors */
+    .phase-badge.phase-init {
         background: #e5e7eb;
         color: #374151;
+        border: 1px solid #d1d5db;
     }
-    .phase-badge.read {
-        background: #fef9c3;
+
+    .phase-badge.phase-read {
+        background: #fef3c7;
         color: #854d0e;
-        border: 1px solid #eab308;
-    } /* Yellow */
-    .phase-badge.write {
-        background: #fee2e2;
+        border: 1px solid #fbbf24;
+    }
+
+    .phase-badge.phase-write {
+        background: #fecaca;
         color: #991b1b;
-        border: 1px solid #ef4444;
-    } /* Red */
-    .phase-badge.rebuild {
+        border: 1px solid #f87171;
+    }
+
+    .phase-badge.phase-compact {
+        background: #fed7aa;
+        color: #c2410c;
+        border: 1px solid #fb923c;
+    }
+
+    .phase-badge.phase-repair {
         background: #dbeafe;
         color: #1e40af;
-        border: 1px solid #3b82f6;
-    } /* Blue */
-    .phase-badge.done {
+        border: 1px solid #60a5fa;
+    }
+
+    .phase-badge.phase-done {
         background: #d1fae5;
         color: #065f46;
         border: 1px solid #10b981;
+    }
+
+    .btn:hover:not(:disabled) {
+        background: #f9fafb;
+        border-color: #9ca3af;
+        color: #111827;
+    }
+
+    .btn:disabled {
+        opacity: 0.4;
+        cursor: not-allowed;
+    }
+
+    .btn.primary {
+        background: #3b82f6;
+        border-color: #3b82f6;
+        color: white;
+    }
+
+    .btn.primary:hover:not(:disabled) {
+        background: #2563eb;
+        border-color: #2563eb;
+    }
+
+    input[type="range"] {
+        width: 100%;
+        cursor: pointer;
     }
 </style>

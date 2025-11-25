@@ -286,17 +286,19 @@ export function* rebuildGen(runtime: EGraphRuntime): Generator<{ phase: 'compact
         }
     }
 
-    // 2. Congruence Repair
+    // 2. Congruence Repair (One item at a time for granular visualization)
     while (runtime.worklist.size > 0) {
-        const todo = Array.from(runtime.worklist);
-        runtime.worklist.clear();
+        // Take just one item from the worklist
+        const eclassId = runtime.worklist.values().next().value;
+        if (eclassId === undefined) break; // Safety check
 
-        for (const eclassId of todo) {
-            repair(runtime, eclassId);
+        runtime.worklist.delete(eclassId);
 
-            // Yield after each repair
-            yield { phase: 'repair', eclassId };
-        }
+        // Repair this item (may add more items to worklist)
+        repair(runtime, eclassId);
+
+        // Yield after each repair to show worklist changes
+        yield { phase: 'repair', eclassId };
     }
 }
 

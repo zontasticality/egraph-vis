@@ -49,9 +49,17 @@
                 return "write";
         }
 
-        // Rebuild Phase: Highlight worklist (Blue)
-        if (phase === "rebuild") {
-            if ($currentState.worklist.includes(id)) return "rebuild";
+        // Compact Phase: Highlight non-canonical (merged) classes being compacted (Orange)
+        if (phase === "compact") {
+            const canonicalId = $currentState.unionFind[id]?.canonical;
+            if (canonicalId !== undefined && canonicalId !== id) {
+                return "compact";
+            }
+        }
+
+        // Repair Phase: Highlight worklist (Blue)
+        if (phase === "repair") {
+            if ($currentState.worklist.includes(id)) return "repair";
         }
 
         return false;
@@ -152,23 +160,25 @@
         --active-bg: #fff;
     }
 
-    /* Specific Active Types */
-    .variant-active.type-read {
-        --active-color: #854d0e; /* Yellow-800 */
-        --active-bg: #fef9c3; /* Yellow-100 */
-        border-color: #eab308; /* Yellow-500 */
+    /* Active States - Stage-Dependent Colors */
+    .enode.type-read {
+        background-color: #fef3c7; /* Yellow 100 */
+        border-color: #fbbf24; /* Yellow 400 */
     }
 
-    .variant-active.type-write {
-        --active-color: #991b1b; /* Red-800 */
-        --active-bg: #fee2e2; /* Red-100 */
-        border-color: #ef4444; /* Red-500 */
+    .enode.type-write {
+        background-color: #fecaca; /* Red 100 */
+        border-color: #f87171; /* Red 400 */
     }
 
-    .variant-active.type-rebuild {
-        --active-color: #1e40af; /* Blue-800 */
-        --active-bg: #dbeafe; /* Blue-100 */
-        border-color: #3b82f6; /* Blue-500 */
+    .enode.type-compact {
+        background-color: #fed7aa; /* Orange 100 */
+        border-color: #fb923c; /* Orange 400 */
+    }
+
+    .enode.type-repair {
+        background-color: #dbeafe; /* Blue 100 */
+        border-color: #60a5fa; /* Blue 400 */
     }
 
     .variant-active {

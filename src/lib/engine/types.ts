@@ -28,7 +28,7 @@ export interface EGraphState {
     id: string;                      // `${presetId}:${stepIndex}`
     presetId: string;
     stepIndex: number;
-    phase: 'init' | 'read' | 'write' | 'rebuild' | 'done';
+    phase: 'init' | 'read' | 'write' | 'compact' | 'repair' | 'done';
     implementation: 'naive' | 'deferred';
     unionFind: Array<{ id: number; canonical: number; isCanonical: boolean }>;
     eclasses: EClassViewModel[];

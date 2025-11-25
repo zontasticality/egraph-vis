@@ -82,39 +82,100 @@
 		const nodeHeight = 40;
 		const clusterPadding = 20;
 
-		// Group E-Classes by Canonical ID (Union-Find Set)
-		const sets = new Map<number, typeof state.eclasses>();
-
-		for (const eclass of state.eclasses) {
-			// Find canonical ID from UnionFind array
-			// Note: state.unionFind is an array where index = id
-			const canonicalId =
-				state.unionFind[eclass.id]?.canonical ?? eclass.id;
-
-			if (!sets.has(canonicalId)) {
-				sets.set(canonicalId, []);
-			}
-			sets.get(canonicalId)!.push(eclass);
-		}
-
-		// Create ELK Nodes for Sets and Classes
-		for (const [canonicalId, eclasses] of sets) {
-			const setChildren: any[] = [];
-
-			for (const eclass of eclasses) {
-				const classChildren: any[] = [];
-				const isCanonical = eclass.id === canonicalId;
-
-				// Determine styling based on canonical status
-				// Non-canonical (merged) classes get Red styling
-				let color = getColorForId(eclass.id);
-				let lightColor = getLightColorForId(eclass.id);
-
-				if (!isCanonical) {
-					// Red for merged/dirty classes
-					color = "#ef4444"; // Red 500
-					lightColor = "rgba(239, 68, 68, 0.1)";
+		// In deferred mode, group E-Classes by their canonical Union-Find set
+		// In naive mode, render E-Classes directly without union-find grouping
+		if (state.implementation === "deferred") {
+			// Group eclasses by canonical ID
+			const sets = new Map<number, typeof state.eclasses>();
+			for (const eclass of state.eclasses) {
+				const canonicalId =
+					state.unionFind[eclass.id]?.canonical ?? eclass.id;
+				if (!sets.has(canonicalId)) {
+					sets.set(canonicalId, []);
 				}
+				sets.get(canonicalId)!.push(eclass);
+			}
+
+			// Create nodes for each set
+			for (const [canonicalId, eclassesInSet] of sets) {
+				const setChildren: any[] = [];
+
+				for (const eclass of eclassesInSet) {
+					const classChildren: any[] = [];
+					const isCanonical = eclass.id === canonicalId;
+
+					// Determine styling based on canonical status
+					// Non-canonical (merged) classes get Red styling
+					let color = getColorForId(eclass.id);
+					let lightColor = getLightColorForId(eclass.id);
+
+					if (!isCanonical) {
+						// Red for merged/dirty classes
+						color = "#ef4444"; // Red 500
+						lightColor = "rgba(239, 68, 68, 0.1)";
+					}
+
+					eclass.nodes.forEach((enode, index) => {
+						const nodeId = `node-${enode.id}`;
+						classChildren.push({
+							id: nodeId,
+							width: nodeWidth,
+							height: nodeHeight,
+							labels: [{ text: enode.op }],
+							data: {
+								id: enode.id,
+								mode: "symbol",
+								eclassId: eclass.id,
+								color: color,
+							},
+						});
+					});
+
+					setChildren.push({
+						id: `class-${eclass.id}`,
+						children: classChildren,
+						layoutOptions: {
+							"elk.algorithm": "layered",
+							"elk.direction": "DOWN",
+							"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`,
+							"elk.spacing.nodeNode": "10",
+						},
+						labels: [{ text: `ID: ${eclass.id}` }],
+						data: {
+							eclassId: eclass.id,
+							color: color,
+							lightColor: lightColor,
+							isCanonical: isCanonical,
+						},
+					});
+				}
+
+				// Create the Union-Find Group Node
+				elkNodes.push({
+					id: `set-${canonicalId}`,
+					children: setChildren,
+					layoutOptions: {
+						"elk.algorithm": "layered",
+						"elk.direction": "DOWN",
+						"elk.padding": `[top=40,left=20,bottom=20,right=20]`,
+						"elk.spacing.nodeNode": "20", // Spacing between merged classes
+						"elk.nodeSize.constraints":
+							"NODE_LABELS PORTS MINIMUM_SIZE",
+						"elk.nodeSize.minimum": "(100,100)",
+					},
+					labels: [{ text: `${canonicalId}` }],
+					data: {
+						label: `${canonicalId}`,
+					},
+				});
+			}
+		} else {
+			// Naive mode: render E-Classes directly
+			for (const eclass of state.eclasses) {
+				const classChildren: any[] = [];
+
+				const color = getColorForId(eclass.id);
+				const lightColor = getLightColorForId(eclass.id);
 
 				eclass.nodes.forEach((enode, index) => {
 					const nodeId = `node-${enode.id}`;
@@ -132,7 +193,8 @@
 					});
 				});
 
-				setChildren.push({
+				// In naive mode, push E-Class groups directly to elkNodes (no outer Set wrapper)
+				elkNodes.push({
 					id: `class-${eclass.id}`,
 					children: classChildren,
 					layoutOptions: {
@@ -146,29 +208,10 @@
 						eclassId: eclass.id,
 						color: color,
 						lightColor: lightColor,
-						isCanonical: isCanonical,
+						isCanonical: true, // All classes are canonical in naive mode
 					},
 				});
 			}
-
-			// Create the Union-Find Group Node
-			elkNodes.push({
-				id: `set-${canonicalId}`,
-				children: setChildren,
-				layoutOptions: {
-					"elk.algorithm": "layered",
-					"elk.direction": "DOWN",
-					"elk.padding": `[top=40,left=20,bottom=20,right=20]`,
-					"elk.spacing.nodeNode": "20", // Spacing between merged classes
-					"elk.nodeSize.constraints":
-						"NODE_LABELS PORTS MINIMUM_SIZE",
-					"elk.nodeSize.minimum": "(100,100)",
-				},
-				labels: [{ text: `${canonicalId}` }],
-				data: {
-					label: `${canonicalId}`,
-				},
-			});
 		}
 
 		let edgeId = 0;
@@ -177,17 +220,19 @@
 				const sourceId = `node-${enode.id}`;
 
 				enode.args.forEach((argClassId, argIndex) => {
-					// Edges point to the SET (Canonical Group), not the specific class
-					// This simplifies the graph and shows logical flow
+					// In deferred mode: edges point to SET nodes
+					// In naive mode: edges point to CLASS nodes directly
 					const canonicalArgId =
 						state.unionFind[argClassId]?.canonical ?? argClassId;
-					const targetId = `set-${canonicalArgId}`;
+					const targetId =
+						state.implementation === "deferred"
+							? `set-${canonicalArgId}`
+							: `class-${canonicalArgId}`;
 
 					elkEdges.push({
 						id: `edge-${edgeId++}`,
 						sources: [sourceId],
 						targets: [targetId],
-						labels: [{ text: `${argIndex}` }],
 					});
 				});
 			});

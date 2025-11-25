@@ -68,8 +68,9 @@ export class TimelineEngine implements EGraphEngine {
                 // In naive mode, rebuild after each rewrite
                 if (this.options.implementation === 'naive') {
                     const rebuildIterator = rebuildGen(this.runtime);
-                    for (const _rebuildStep of rebuildIterator) {
-                        this.emitSnapshot('rebuild', matches);
+                    for (const step of rebuildIterator) {
+                        // Emit snapshot with the specific phase (compact or repair)
+                        this.emitSnapshot(step.phase, matches);
                     }
                 }
             }
@@ -83,8 +84,9 @@ export class TimelineEngine implements EGraphEngine {
             // Naive mode already rebuilt during applyMatchesGen
             if (this.options.implementation === 'deferred') {
                 const rebuildIterator = rebuildGen(this.runtime);
-                for (const _step of rebuildIterator) {
-                    this.emitSnapshot('rebuild', matches);
+                for (const step of rebuildIterator) {
+                    // Emit snapshot with the specific phase (compact or repair)
+                    this.emitSnapshot(step.phase, matches);
                 }
             }
 
