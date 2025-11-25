@@ -103,6 +103,10 @@ Because snapshots are persistent, panes can animate transitions by diffing `stat
 - Always guard `index === 0` (no previous state) → treat as fresh render.
 - Prefer engine-provided diffs for expensive comparisons (hashcons, union-find) to avoid O(n²) work in the UI.
 
+### 6.1 Data Structures
+- **Chunked Node Registry**: `EGraphState` uses `nodeChunks: ENode[][]` (array of arrays) instead of a flat array for the node registry. This allows `mutative` to perform efficient structural sharing when appending new nodes, as only the last chunk needs to be cloned/updated.
+- **Metadata**: `StepMetadata` includes `matches` (for Read phase highlighting) and `diffs` (for Write phase highlighting).
+
 ## 7. Lazy vs Precomputed Modes
 - **Precomputed (default)**: `TimelineEngine` runs immediately after preset selection, populates `states`, then emits `status=ready`. Controller interaction never re-runs the engine; extremely fast scrubbing.
 - **Live/authoring**: Optional development mode where each controller action triggers the engine to compute the next step on demand. Even in this mode the newly produced state must be appended to `states` so future scrubbing remains consistent.
