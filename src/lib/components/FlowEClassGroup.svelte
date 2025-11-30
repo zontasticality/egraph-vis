@@ -14,8 +14,6 @@
     class="flow-eclass-group"
     style:--color={data.color || "#999"}
     style:--bg={data.lightColor || "rgba(240, 240, 240, 0.5)"}
-    style:width="{data.width}px"
-    style:height="{data.height}px"
 >
     <!-- Target Handle for incoming edges from arguments -->
     <Handle
@@ -39,11 +37,12 @@
         border-radius: 8px;
         position: relative;
         box-sizing: border-box;
+        overflow: visible;
     }
 
     .group-label {
         position: absolute;
-        top: -20px;
+        top: -1.5em;
         left: 0;
         color: var(--color);
         font-weight: bold;

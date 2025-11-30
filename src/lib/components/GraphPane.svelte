@@ -117,16 +117,18 @@
 
 					eclass.nodes.forEach((enode, index) => {
 						const nodeId = `node-${enode.id}`;
+
 						classChildren.push({
 							id: nodeId,
-							width: nodeWidth,
-							height: nodeHeight,
+							width: 50, // Square
+							height: 50, // Square
 							labels: [{ text: enode.op }],
 							data: {
 								id: enode.id,
-								mode: "symbol",
+								// mode: "symbol", // Removed, handled by component
 								eclassId: eclass.id,
 								color: color,
+								args: enode.args, // Pass args to data for component to render handles
 							},
 						});
 					});
@@ -137,15 +139,15 @@
 						layoutOptions: {
 							"elk.algorithm": "layered",
 							"elk.direction": "DOWN",
-							"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`,
-							"elk.spacing.nodeNode": "10",
+							"elk.padding": `[top=8,left=8,bottom=8,right=8]`,
+							"elk.spacing.nodeNode": "8",
 						},
-						labels: [{ text: `ID: ${eclass.id}` }],
 						data: {
 							eclassId: eclass.id,
 							color: color,
 							lightColor: lightColor,
 							isCanonical: isCanonical,
+							label: `ID: ${eclass.id}`,
 						},
 					});
 				}
@@ -157,15 +159,11 @@
 					layoutOptions: {
 						"elk.algorithm": "layered",
 						"elk.direction": "DOWN",
-						"elk.padding": `[top=40,left=20,bottom=20,right=20]`,
-						"elk.spacing.nodeNode": "20", // Spacing between merged classes
-						"elk.nodeSize.constraints":
-							"NODE_LABELS PORTS MINIMUM_SIZE",
-						"elk.nodeSize.minimum": "(100,100)",
+						"elk.padding": `[top=8,left=20,bottom=8,right=8]`,
+						"elk.spacing.nodeNode": "10",
 					},
-					labels: [{ text: `${canonicalId}` }],
 					data: {
-						label: `${canonicalId}`,
+						label: `Set: ${canonicalId}`,
 					},
 				});
 			}
@@ -179,16 +177,18 @@
 
 				eclass.nodes.forEach((enode, index) => {
 					const nodeId = `node-${enode.id}`;
+
 					classChildren.push({
 						id: nodeId,
-						width: nodeWidth,
-						height: nodeHeight,
+						width: 50,
+						height: 50,
 						labels: [{ text: enode.op }],
 						data: {
 							id: enode.id,
-							mode: "symbol",
+							// mode: "symbol",
 							eclassId: eclass.id,
 							color: color,
+							args: enode.args,
 						},
 					});
 				});
@@ -200,7 +200,7 @@
 					layoutOptions: {
 						"elk.algorithm": "layered",
 						"elk.direction": "DOWN",
-						"elk.padding": `[top=${clusterPadding + 20},left=${clusterPadding},bottom=${clusterPadding},right=${clusterPadding}]`,
+						"elk.padding": `[top=${clusterPadding},left=${clusterPadding},bottom=${clusterPadding + 10},right=${clusterPadding}]`,
 						"elk.spacing.nodeNode": "10",
 					},
 					labels: [{ text: `ID: ${eclass.id}` }],
@@ -233,6 +233,7 @@
 						id: `edge-${edgeId++}`,
 						sources: [sourceId],
 						targets: [targetId],
+						sourcePort: `port-${enode.id}-${argIndex}`, // Connect from specific port
 					});
 				});
 			});
@@ -305,6 +306,7 @@
 						id: edge.id,
 						source: edge.sources[0],
 						target: edge.targets[0],
+						sourceHandle: edge.sourcePort, // Map sourcePort to sourceHandle
 						type: "smoothstep",
 						animated: false,
 						style: "stroke: #b1b1b7;",

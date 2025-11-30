@@ -36,10 +36,19 @@ Backed by Svelte Flow (`@xyflow/svelte`) and ELK Layout.
 
 ### 4.1 Layout & Rendering
 - **Algorithm**: `elk.layered` with `elk.direction: 'DOWN'` and `elk.hierarchyHandling: 'INCLUDE_CHILDREN'`.
-- **Nodes**: Rendered as **E-Class Clusters** (custom `FlowEClassGroup`).
-  - **Header**: Canonical Diamond ID.
-  - **Body**: List of E-Node Symbol Boxes (`FlowENode`).
-- **Edges**: Drawn from Parent E-Node to Child E-Class Group. Arrow markers added. Edge labels removed for clarity.
+- **Deferred Mode**:
+  - **Outer Nodes**: `UnionFind Set` (canonical ID).
+  - **Inner Nodes**: `E-Class` groups containing `E-Nodes`.
+- **Naive Mode**:
+  - **Nodes**: `E-Class` groups directly containing `E-Nodes`.
+
+### 4.2 E-Node Visualization (Port-Based)
+- **Fixed Size**: Nodes have a fixed dimension (e.g., 60x40px) to ensure stable layout.
+- **Operator**: Displayed as a scaled SVG text to fit within the box without overflow.
+- **Arguments**:
+  - Represented as **Ports** along the bottom edge of the node.
+  - **Edges**: Drawn from the specific argument port to the target E-Class/Set.
+  - **Interaction**: Hovering a port highlights the specific argument edge.
 
 ## 5. State Pane (`StatePane.svelte`)
 Single scrollable column visualizing internal structures.
