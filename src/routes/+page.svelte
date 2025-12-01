@@ -4,8 +4,8 @@
     import { onMount } from "svelte";
     import { PaneGroup, Pane, PaneResizer } from "paneforge";
 
-    import GraphPane from "$lib/components/GraphPane.svelte";
-    import StatePane from "$lib/components/StatePane.svelte";
+    import GraphPane from "$lib/components/graph_pane/GraphPane.svelte";
+    import StatePane from "$lib/components/state_pane/StatePane.svelte";
 
     // Full example from the paper
     const demoPreset = {

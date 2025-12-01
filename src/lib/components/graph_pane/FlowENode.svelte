@@ -1,7 +1,7 @@
 <script lang="ts">
     import { Handle, Position } from "@xyflow/svelte";
-    import { interactionStore } from "../stores/interactionStore";
-    import { getColorForId, getLightColorForId } from "../utils/colors";
+    import { interactionStore } from "../../stores/interactionStore";
+    import { getColorForId, getLightColorForId } from "../../utils/colors";
 
     export let data: {
         id: number;
@@ -11,8 +11,7 @@
         args: number[]; // Argument IDs
     };
 
-    // Calculate handle positions
-    // We need to space them evenly along the bottom width (60px)
+    // Calculate handle positions evenly along bottom (50px node width)
     $: handlePositions = data.args.map((_, i) => {
         const count = data.args.length;
         // e.g. if count is 1, pos is 50%

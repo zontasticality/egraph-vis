@@ -10,14 +10,13 @@
 	} from "@xyflow/svelte";
 	import "@xyflow/svelte/dist/style.css";
 	import { writable, get } from "svelte/store";
-	import { currentState, transitionMode } from "../stores/timelineStore";
-	import { interactionStore } from "../stores/interactionStore";
+	import { currentState, transitionMode } from "../../stores/timelineStore";
+	import { interactionStore } from "../../stores/interactionStore";
 	import ELK from "elkjs";
-	import type { EGraphState } from "../engine/types";
-	import { getColorForId, getLightColorForId } from "../utils/colors";
+	import type { EGraphState } from "../../engine/types";
+	import { getColorForId, getLightColorForId } from "../../utils/colors";
 
-	import ENode from "./ENode.svelte";
-	import FlowENode from "./FlowENode.svelte"; // I will create this next
+	import FlowENode from "./FlowENode.svelte";
 	import FlowUnionFindGroup from "./FlowUnionFindGroup.svelte";
 	import FlowEClassGroup from "./FlowEClassGroup.svelte";
 
@@ -77,11 +76,6 @@
 		const elkNodes: any[] = [];
 		const elkEdges: any[] = [];
 
-		// Estimate dimensions for ENode component
-		const nodeWidth = 100; // Approximate width for symbol mode
-		const nodeHeight = 40;
-		const clusterPadding = 20;
-
 		// In deferred mode, group E-Classes by their canonical Union-Find set
 		// In naive mode, render E-Classes directly without union-find grouping
 		if (state.implementation === "deferred") {
@@ -122,13 +116,12 @@
 							id: nodeId,
 							width: 50, // Square
 							height: 50, // Square
-							labels: [{ text: enode.op }],
 							data: {
 								id: enode.id,
-								// mode: "symbol", // Removed, handled by component
 								eclassId: eclass.id,
 								color: color,
 								args: enode.args, // Pass args to data for component to render handles
+								label: enode.op,
 							},
 						});
 					});
@@ -182,13 +175,12 @@
 						id: nodeId,
 						width: 50,
 						height: 50,
-						labels: [{ text: enode.op }],
 						data: {
 							id: enode.id,
-							// mode: "symbol",
 							eclassId: eclass.id,
 							color: color,
 							args: enode.args,
+							label: enode.op,
 						},
 					});
 				});
@@ -200,15 +192,15 @@
 					layoutOptions: {
 						"elk.algorithm": "layered",
 						"elk.direction": "DOWN",
-						"elk.padding": `[top=${clusterPadding},left=${clusterPadding},bottom=${clusterPadding + 10},right=${clusterPadding}]`,
-						"elk.spacing.nodeNode": "10",
+						"elk.padding": `[top=8,left=8,bottom=8,right=8]`,
+						"elk.spacing.nodeNode": "8",
 					},
-					labels: [{ text: `ID: ${eclass.id}` }],
 					data: {
 						eclassId: eclass.id,
 						color: color,
 						lightColor: lightColor,
-						isCanonical: true, // All classes are canonical in naive mode
+						isCanonical: true,
+						label: `ID: ${eclass.id}`,
 					},
 				});
 			}
@@ -336,26 +328,7 @@
 
 		nodes.update((currentNodes) => {
 			return currentNodes.map((node) => {
-				// We don't need to update style string anymore for clusters,
-				// as FlowEClassGroup should react to data changes?
-				// Wait, FlowEClassGroup receives `data`. We need to update `data` to trigger reactivity in the component?
-				// Or we can just update the style prop if we want to override colors.
-
-				// Actually, FlowEClassGroup uses `data.color`.
-				// If we want to highlight, we should probably update `data`.
-				// But Svelte Flow nodes are reactive.
-
-				// Let's stick to the previous approach of updating style for now,
-				// BUT FlowEClassGroup uses CSS variables from style attribute?
-				// No, it uses style:--color={data.color}.
-
-				// If we want to change the border color on selection, we should update data.
-				// Or we can just let the component handle selection state if we pass it?
-				// But selection state is global in interactionStore.
-
-				// Let's update `data` in the node.
-
-				const isCluster = node.id.startsWith("class-");
+				const isEClassGroup = node.id.startsWith("class-");
 				const eclassId = node.data?.eclassId;
 
 				let isSelected = false;
@@ -376,13 +349,8 @@
 					}
 				}
 
-				if (isCluster) {
-					// We need to clone data to trigger update
+				if (isEClassGroup) {
 					const newData = { ...node.data };
-
-					const baseColor = newData.color || "#999";
-					// We can't easily change the color prop without losing the original.
-					// But we can add an override.
 
 					if (isSelected) {
 						newData.color = "#2563eb";

@@ -4,8 +4,6 @@
     type $$Props = NodeProps;
 
     export let data: $$Props["data"];
-    export let width: number | undefined = undefined;
-    export let height: number | undefined = undefined;
 </script>
 
 <div class="union-find-group">

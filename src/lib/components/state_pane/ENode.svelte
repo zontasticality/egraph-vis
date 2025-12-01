@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { currentState } from "../stores/timelineStore";
-    import { interactionStore } from "../stores/interactionStore";
-    import { getColorForId, getLightColorForId } from "../utils/colors";
+    import { currentState } from "../../stores/timelineStore";
+    import { interactionStore } from "../../stores/interactionStore";
+    import { getColorForId, getLightColorForId } from "../../utils/colors";
 
     export let id: number;
     export let mode: "id" | "symbol" = "id";

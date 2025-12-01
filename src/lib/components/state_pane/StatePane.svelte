@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { currentState } from "../stores/timelineStore";
+	import { currentState } from "../../stores/timelineStore";
 	import ENode from "./ENode.svelte";
-	import type { EClassViewModel } from "../engine/types";
+	import type { EClassViewModel } from "../../engine/types";
 
 	// Group E-Classes by Canonical ID for the view
 	$: sets = (() => {
