@@ -14,12 +14,10 @@
         : undefined;
 
     // --- Derived State ---
-    $: isCanonical = $currentState?.unionFind[id]?.isCanonical ?? true; // Default to true if not found (e.g. init)
+    $: isCanonical = $currentState?.unionFind[id]?.isCanonical ?? true;
     $: canonicalId = $currentState?.unionFind[id]?.canonical ?? id;
 
-    $: isSelected =
-        $interactionStore.selection?.type === "eclass" &&
-        $interactionStore.selection.id === canonicalId; // Select by canonical ID
+    $: isSelected = $interactionStore.selection?.nodeIds.has(id) ?? false;
 
     $: isHovered =
         $interactionStore.hover?.type === "eclass" &&
@@ -77,7 +75,7 @@
     // --- Interaction ---
     function handleClick(e: MouseEvent) {
         e.stopPropagation();
-        interactionStore.select({ type: "eclass", id: canonicalId });
+        interactionStore.selectENode(id);
     }
 
     function handleMouseEnter(e: MouseEvent) {

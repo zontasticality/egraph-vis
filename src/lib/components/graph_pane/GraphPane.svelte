@@ -37,16 +37,17 @@
 	// --- Interaction Handling ---
 
 	function handleNodeClick({ node }: { node: Node }) {
-		const eclassId = node.data?.eclassId as number | string | undefined;
-		if (eclassId !== undefined) {
-			interactionStore.select({ type: "eclass", id: eclassId });
+		// Clicking E-Class group selects all nodes in the class
+		const nodeIds = node.data?.nodeIds as number[] | undefined;
+		if (nodeIds && nodeIds.length > 0) {
+			interactionStore.selectEClass(nodeIds);
 		} else {
 			interactionStore.clearSelection();
 		}
 	}
 
 	function handleNodeMouseEnter({ node }: { node: Node }) {
-		const eclassId = node.data?.eclassId as number | string | undefined;
+		const eclassId = node.data?.eclassId as number | undefined;
 		if (eclassId !== undefined) {
 			interactionStore.hover({ type: "eclass", id: eclassId });
 		}
@@ -115,13 +116,14 @@
 
 						classChildren.push({
 							id: nodeId,
-							width: 50, // Square
-							height: 50, // Square
+							width: 50,
+							height: 50,
 							data: {
 								id: enode.id,
 								eclassId: eclass.id,
 								color: color,
-								args: enode.args, // Pass args to data for component to render handles
+								enodeColor: getColorForId(enode.id), // E-Node identity color
+								args: enode.args,
 								label: enode.op,
 							},
 						});
@@ -142,6 +144,7 @@
 							lightColor: lightColor,
 							isCanonical: isCanonical,
 							label: `ID: ${eclass.id}`,
+							nodeIds: eclass.nodes.map((n) => n.id), // For selection logic
 						},
 					});
 				}
@@ -180,13 +183,13 @@
 							id: enode.id,
 							eclassId: eclass.id,
 							color: color,
+							enodeColor: getColorForId(enode.id), // E-Node identity color
 							args: enode.args,
 							label: enode.op,
 						},
 					});
 				});
 
-				// In naive mode, push E-Class groups directly to elkNodes (no outer Set wrapper)
 				elkNodes.push({
 					id: `class-${eclass.id}`,
 					children: classChildren,
@@ -202,6 +205,7 @@
 						lightColor: lightColor,
 						isCanonical: true,
 						label: `ID: ${eclass.id}`,
+						nodeIds: eclass.nodes.map((n) => n.id), // For selection logic
 					},
 				});
 			}
@@ -320,59 +324,6 @@
 
 	// React to state changes
 	$: updateLayout($currentState);
-
-	// React to interaction changes to update styles (Clusters only)
-	// ENode component handles its own interaction styles!
-	$: {
-		const $interaction = $interactionStore;
-		const $mode = $transitionMode;
-
-		nodes.update((currentNodes) => {
-			return currentNodes.map((node) => {
-				const isEClassGroup = node.id.startsWith("class-");
-				const eclassId = node.data?.eclassId;
-
-				let isSelected = false;
-				let isHovered = false;
-
-				if (eclassId !== undefined) {
-					if (
-						$interaction.selection?.type === "eclass" &&
-						$interaction.selection.id === eclassId
-					) {
-						isSelected = true;
-					}
-					if (
-						$interaction.hover?.type === "eclass" &&
-						$interaction.hover.id === eclassId
-					) {
-						isHovered = true;
-					}
-				}
-
-				if (isEClassGroup) {
-					const newData = { ...node.data };
-
-					if (isSelected) {
-						newData.color = "#2563eb";
-						newData.lightColor = "rgba(37, 99, 235, 0.1)";
-					} else if (isHovered) {
-						newData.color = "#60a5fa";
-						// Reset to original (stored where? we don't store original in a separate field)
-						// We need to re-fetch color from ID.
-						if (typeof eclassId === "number") {
-							newData.color = getColorForId(eclassId);
-							newData.lightColor = getLightColorForId(eclassId);
-						}
-					}
-
-					return { ...node, data: newData };
-				}
-
-				return node;
-			});
-		});
-	}
 </script>
 
 <div class="graph-container">

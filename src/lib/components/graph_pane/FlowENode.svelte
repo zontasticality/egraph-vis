@@ -1,24 +1,69 @@
 <script lang="ts">
     import { Handle, Position } from "@xyflow/svelte";
     import { interactionStore } from "../../stores/interactionStore";
+    import { currentState } from "../../stores/timelineStore";
     import { getColorForId, getLightColorForId } from "../../utils/colors";
 
     export let data: {
         id: number;
         label?: string; // The operator symbol
         eclassId: number;
-        color: string;
+        color: string; // E-Class color (for group/handles)
+        enodeColor: string; // E-Node identity color (hash-derived)
         args: number[]; // Argument IDs
     };
 
     // Calculate handle positions evenly along bottom (50px node width)
     $: handlePositions = data.args.map((_, i) => {
         const count = data.args.length;
-        // e.g. if count is 1, pos is 50%
-        // if count is 2, pos is 33%, 66%
-        // if count is 3, pos is 25%, 50%, 75%
         return ((i + 1) / (count + 1)) * 100;
     });
+
+    // Selection state
+    $: isSelected = $interactionStore.selection?.nodeIds.has(data.id) ?? false;
+
+    // Ghost state (non-canonical node)
+    $: isGhost = !($currentState?.unionFind[data.id]?.isCanonical ?? true);
+
+    // Phase-based state detection
+    $: isMatched =
+        $currentState?.metadata.matches.some((m) =>
+            m.nodes.includes(data.id),
+        ) ?? false;
+
+    $: isInDiff =
+        $currentState?.metadata.diffs.some(
+            (d) =>
+                (d.type === "add" && d.nodeId === data.id) ||
+                (d.type === "rewrite" && d.createdId === data.id),
+        ) ?? false;
+
+    $: isInWorklist = $currentState?.worklist.includes(data.id) ?? false;
+
+    // Compute state-based colors
+    $: borderColor = (() => {
+        const phase = $currentState?.phase;
+        if (phase === "read" && isMatched) return "#eab308"; // Yellow
+        if (phase === "write" && isInDiff) return "#dc2626"; // Red
+        if (phase === "compact" && !isGhost) return "#f97316"; // Orange
+        if (phase === "repair" && isInWorklist) return "#3b82f6"; // Blue
+        if (isSelected) return "#2563eb"; // Selected blue
+        return "#e5e7eb"; // Neutral gray
+    })();
+
+    $: backgroundColor = (() => {
+        const phase = $currentState?.phase;
+        if (phase === "read" && isMatched) return "#fef3c7";
+        if (phase === "write" && isInDiff) return "#fef2f2";
+        if (phase === "compact" && !isGhost) return "#fff7ed";
+        if (phase === "repair" && isInWorklist) return "#eff6ff";
+        if (isSelected) return "#eff6ff";
+        return "white";
+    })();
+
+    function handleClick() {
+        interactionStore.selectENode(data.id);
+    }
 
     function handlePortEnter(argIndex: number, argId: number) {
         // We want to highlight the edge connected to this port.
@@ -32,7 +77,18 @@
     }
 </script>
 
-<div class="flow-enode-wrapper" style:--color={data.color}>
+<div
+    class="flow-enode-wrapper"
+    class:ghost={isGhost}
+    style:--border-color={borderColor}
+    style:--bg-color={backgroundColor}
+    on:click={handleClick}
+    role="button"
+    tabindex="0"
+>
+    <!-- Identity Circle -->
+    <div class="identity-circle" style:background={data.enodeColor}></div>
+
     <!-- Incoming Handle (Top) -->
     <Handle
         type="target"
@@ -73,8 +129,8 @@
     .flow-enode-wrapper {
         width: 100%;
         height: 100%;
-        background: white;
-        border: 2px solid var(--color);
+        background: var(--bg-color);
+        border: 2px solid var(--border-color);
         border-radius: 6px;
         display: flex;
         flex-direction: column;
@@ -82,7 +138,27 @@
         justify-content: center;
         position: relative;
         box-sizing: border-box;
-        overflow: visible; /* Allow handles to poke out slightly */
+        overflow: visible;
+        cursor: pointer;
+        transition: all 0.15s ease-out;
+    }
+
+    .flow-enode-wrapper.ghost {
+        opacity: 0.5;
+        border-style: dashed;
+    }
+
+    .identity-circle {
+        position: absolute;
+        width: 30px;
+        height: 30px;
+        border-radius: 50%;
+        top: 50%;
+        left: 50%;
+        transform: translate(-50%, -50%);
+        opacity: 0.25;
+        z-index: 0;
+        pointer-events: none;
     }
 
     .symbol-container {

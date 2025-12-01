@@ -156,7 +156,7 @@
 	/* 3-Panel Grid Layout */
 	.panel-grid {
 		display: grid;
-		grid-template-rows: 1fr 1fr 1fr;
+		grid-template-rows: 1fr 1fr minmax(50px, auto); /* Hashcons / E-Classes / Worklist (auto-size) */
 		height: 100%;
 		gap: 0;
 		border-top: 1px solid var(--border-color, #e5e7eb);

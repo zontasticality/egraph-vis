@@ -1,37 +1,67 @@
 import { writable } from 'svelte/store';
 
-export type InteractionType = 'enode' | 'eclass' | 'hashcons';
+export type HoverTarget =
+    | { type: 'eclass'; id: number }
+    | { type: 'enode'; id: number }
+    | { type: 'hashcons'; key: string };
 
-export interface InteractionTarget {
-    type: InteractionType;
-    id: number | string;
+export interface Selection {
+    nodeIds: Set<number>;
 }
 
-export interface InteractionState {
-    selection: InteractionTarget | null;
-    hover: InteractionTarget | null;
+interface InteractionState {
+    hover: HoverTarget | null;
+    selection: Selection | null;
 }
 
 function createInteractionStore() {
-    const { subscribe, set, update } = writable<InteractionState>({
-        selection: null,
-        hover: null
+    const { subscribe, update } = writable<InteractionState>({
+        hover: null,
+        selection: null
     });
 
     return {
         subscribe,
-        select: (target: InteractionTarget | null) => update(s => {
-            // Toggle selection if clicking the same item? 
-            // Spec says "Exclusive selection. Clicking an item selects it and deselects the previous one."
-            // "Deselection: Clicking the background of any pane clears the selection."
-            // So if target is passed, select it. If null, clear it.
-            // Let's implement simple set for now.
-            return { ...s, selection: target };
+        hover: (target: HoverTarget) => update(state => ({ ...state, hover: target })),
+        clearHover: () => update(state => ({ ...state, hover: null })),
+
+        // Select a single E-Node
+        selectENode: (id: number) => update(state => ({
+            ...state,
+            selection: { nodeIds: new Set([id]) }
+        })),
+
+        // Select all nodes in an E-Class
+        selectEClass: (nodeIdsInClass: number[]) => update(state => ({
+            ...state,
+            selection: { nodeIds: new Set(nodeIdsInClass) }
+        })),
+
+        // Toggle a node in/out of selection (for future multi-select)
+        toggleENode: (id: number) => update(state => {
+            if (!state.selection) {
+                return { ...state, selection: { nodeIds: new Set([id]) } };
+            }
+            const newSet = new Set(state.selection.nodeIds);
+            if (newSet.has(id)) {
+                newSet.delete(id);
+                return {
+                    ...state,
+                    selection: newSet.size > 0 ? { nodeIds: newSet } : null
+                };
+            } else {
+                newSet.add(id);
+                return { ...state, selection: { nodeIds: newSet } };
+            }
         }),
-        hover: (target: InteractionTarget | null) => update(s => ({ ...s, hover: target })),
         clearSelection: () => update(s => ({ ...s, selection: null })),
-        clearHover: () => update(s => ({ ...s, hover: null }))
     };
 }
 
 export const interactionStore = createInteractionStore();
+
+// Helper: Check if all nodes in an E-Class are selected
+export function isEClassFullySelected(nodeIds: number[], selection: Selection | null): boolean {
+    if (!selection) return false;
+    return nodeIds.every(id => selection.nodeIds.has(id));
+}
