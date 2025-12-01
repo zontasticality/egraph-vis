@@ -103,7 +103,7 @@
     style:--id-bg={getLightColorForId(canonicalId)}
 >
     {#if mode === "id"}
-        <span class="diamond">{id}</span>
+        <span class="pill">{id}</span>
     {:else if node}
         <span class="op">{node.op}</span>
         <span class="args">

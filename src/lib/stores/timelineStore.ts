@@ -11,6 +11,7 @@ export const currentIndex = writable<number>(0);
 export const isPlaying = writable<boolean>(false);
 export const playbackSpeed = writable<number>(1000); // ms per step
 export const transitionMode = writable<'smooth' | 'instant'>('smooth');
+export const currentPreset = writable<PresetConfig | null>(null);
 
 // Derived store for the current state
 export const currentState = derived(
@@ -39,6 +40,7 @@ let playInterval: any = null;
 
 export function loadPreset(preset: PresetConfig, options: EngineOptions = { implementation: 'deferred', iterationCap: 100 }) {
     stop();
+    currentPreset.set(preset);
     engine = new TimelineEngine();
     engine.loadPreset(preset, options);
     const newTimeline = engine.runUntilHalt();
@@ -46,6 +48,14 @@ export function loadPreset(preset: PresetConfig, options: EngineOptions = { impl
     timeline.set(newTimeline);
     currentIndex.set(0);
     transitionMode.set('smooth');
+}
+
+export async function loadPresetById(id: string, options: EngineOptions = { implementation: 'deferred', iterationCap: 100 }) {
+    const { getPresetById } = await import('../presets');
+    const preset = getPresetById(id);
+    if (preset) {
+        loadPreset(preset, options);
+    }
 }
 
 export function goToStep(index: number, instant = false) {

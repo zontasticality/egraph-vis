@@ -3,6 +3,7 @@
     import { loadPreset } from "$lib/stores/timelineStore";
     import { onMount } from "svelte";
     import { PaneGroup, Pane, PaneResizer } from "paneforge";
+    import { PRESETS } from "$lib/presets";
 
     import GraphPane from "$lib/components/graph_pane/GraphPane.svelte";
     import StatePane from "$lib/components/state_pane/StatePane.svelte";
@@ -50,11 +51,20 @@
     let isDeferred = true;
     let paneLayout = [60, 40]; // Default split
     let ready = false;
+    let selectedPresetId = "paper-example";
 
     function reload() {
-        loadPreset(demoPreset, {
+        const preset =
+            PRESETS.find((p) => p.id === selectedPresetId) || PRESETS[0];
+        loadPreset(preset, {
             implementation: isDeferred ? "deferred" : "naive",
         });
+    }
+
+    function handlePresetChange(e: Event) {
+        const target = e.target as HTMLSelectElement;
+        selectedPresetId = target.value;
+        reload();
     }
 
     function onLayoutChange(sizes: number[]) {
@@ -90,6 +100,16 @@
         </div>
 
         <div class="header-section center-controls">
+            <select
+                class="preset-selector"
+                value={selectedPresetId}
+                on:change={handlePresetChange}
+            >
+                {#each PRESETS as preset}
+                    <option value={preset.id}>{preset.label}</option>
+                {/each}
+            </select>
+
             <div class="toggle-container">
                 <span class="toggle-label {isDeferred ? '' : 'active'}"
                     >Naive</span
@@ -172,6 +192,30 @@
 
     .right-controls {
         justify-content: flex-end;
+    }
+
+    /* Preset Selector */
+    .preset-selector {
+        padding: 0.375rem 0.75rem;
+        font-size: 0.9rem;
+        font-weight: 500;
+        color: #374151;
+        background: white;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        cursor: pointer;
+        transition: all 0.2s;
+        margin-right: 1.5rem;
+    }
+
+    .preset-selector:hover {
+        border-color: #2563eb;
+    }
+
+    .preset-selector:focus {
+        outline: none;
+        border-color: #2563eb;
+        box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
     }
 
     /* Toggle Switch */

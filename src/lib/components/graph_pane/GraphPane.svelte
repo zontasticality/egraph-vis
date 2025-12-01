@@ -19,6 +19,7 @@
 	import FlowENode from "./FlowENode.svelte";
 	import FlowUnionFindGroup from "./FlowUnionFindGroup.svelte";
 	import FlowEClassGroup from "./FlowEClassGroup.svelte";
+	import RewriteRulesPanel from "./RewriteRulesPanel.svelte";
 
 	const nodeTypes = {
 		enode: FlowENode,
@@ -389,10 +390,13 @@
 		<Background />
 		<Controls />
 	</SvelteFlow>
+
+	<RewriteRulesPanel />
 </div>
 
 <style>
 	.graph-container {
+		position: relative;
 		width: 100%;
 		height: 100%;
 	}
