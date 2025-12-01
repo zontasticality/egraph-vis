@@ -158,6 +158,7 @@
         font-size: 12px;
         vertical-align: top;
         transition: all 0.2s;
+        min-width: fit-content; /* Prevent resize when bold */
     }
 
     .rule-chip:hover {

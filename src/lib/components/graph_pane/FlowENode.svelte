@@ -69,45 +69,97 @@
 
     $: isInWorklist = $currentState?.worklist.includes(data.id) ?? false;
 
-    // Compute state-based colors
+    // Compute state-based colors (more vibrant)
     $: borderColor = (() => {
         const phase = $currentState?.phase;
 
         // Read phase: LHS matched in yellow
-        if (phase === "read" && isMatched) return "#eab308";
+        if (phase === "read" && isMatched) return "#facc15";
 
         // Write phase:
         if (phase === "write") {
             // LHS match tree stays yellow
-            if (isMatched) return "#eab308";
+            if (isMatched) return "#facc15";
             // All new nodes (plain add or RHS rewrite): red
-            if (isPlainAdd || isRHSCreated) return "#dc2626";
+            if (isPlainAdd || isRHSCreated) return "#ef4444";
         }
 
-        if (phase === "compact" && !isGhost) return "#f97316"; // Orange
-        if (phase === "repair" && isInWorklist) return "#3b82f6"; // Blue
+        // Compact phase: Highlight only the active e-class being compacted
+        if (phase === "compact") {
+            const activeId = $currentState?.metadata.activeId;
+            // Check if this node belongs to the active e-class
+            // Note: data.eclassId is the e-class this node belongs to
+            if (
+                activeId !== undefined &&
+                data.eclassId === activeId &&
+                !isGhost
+            ) {
+                return "#fb923c"; // Orange
+            }
+        }
+
+        // Repair phase: Highlight only the active e-class being repaired
+        if (phase === "repair") {
+            const activeId = $currentState?.metadata.activeId;
+            if (
+                activeId !== undefined &&
+                data.eclassId === activeId &&
+                isInWorklist
+            ) {
+                return "#3b82f6"; // Blue
+            }
+        }
+
         if (isSelected) return "#2563eb"; // Selected blue
-        return "#e5e7eb"; // Neutral gray
+        return "#000000"; // Black border by default
     })();
 
     $: backgroundColor = (() => {
         const phase = $currentState?.phase;
 
-        // Read phase: LHS matched
-        if (phase === "read" && isMatched) return "#fef3c7";
+        // Read phase: LHS matched - same as border for solid appearance
+        if (phase === "read" && isMatched) return "#facc15";
 
         // Write phase:
         if (phase === "write") {
             // LHS match tree stays yellow
-            if (isMatched) return "#fef3c7";
+            if (isMatched) return "#facc15";
             // All new nodes (plain add or RHS rewrite): red
-            if (isPlainAdd || isRHSCreated) return "#fef2f2";
+            if (isPlainAdd || isRHSCreated) return "#ef4444";
         }
 
-        if (phase === "compact" && !isGhost) return "#fff7ed";
-        if (phase === "repair" && isInWorklist) return "#eff6ff";
-        if (isSelected) return "#eff6ff";
+        // Compact phase: Highlight only active e-class
+        if (phase === "compact") {
+            const activeId = $currentState?.metadata.activeId;
+            if (
+                activeId !== undefined &&
+                data.eclassId === activeId &&
+                !isGhost
+            ) {
+                return "#fb923c";
+            }
+        }
+
+        // Repair phase: Highlight only active e-class
+        if (phase === "repair") {
+            const activeId = $currentState?.metadata.activeId;
+            if (
+                activeId !== undefined &&
+                data.eclassId === activeId &&
+                isInWorklist
+            ) {
+                return "#3b82f6";
+            }
+        }
+
+        if (isSelected) return "#3b82f6";
         return "white";
+    })();
+
+    // Text color for contrast on vibrant backgrounds
+    $: textColor = (() => {
+        if (backgroundColor === "white") return "#374151";
+        return "#ffffff"; // White text on vibrant colors
     })();
 
     function handleClick() {
@@ -124,6 +176,13 @@
     function handlePortLeave() {
         interactionStore.clearHover();
     }
+
+    function handleKeydown(event: KeyboardEvent) {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            handleClick();
+        }
+    }
 </script>
 
 <div
@@ -131,12 +190,15 @@
     class:ghost={isGhost}
     style:--border-color={borderColor}
     style:--bg-color={backgroundColor}
+    style:--text-color={textColor}
+    style:--identity-color={data.enodeColor}
     on:click={handleClick}
+    on:keydown={handleKeydown}
     role="button"
     tabindex="0"
 >
     <!-- Identity Circle -->
-    <div class="identity-circle" style:background={data.enodeColor}></div>
+    <div class="identity-circle"></div>
 
     <!-- Incoming Handle (Top) -->
     <Handle
@@ -189,7 +251,7 @@
         box-sizing: border-box;
         overflow: visible;
         cursor: pointer;
-        transition: all 0.15s ease-out;
+        transition: all 0.1s ease-out; /* Faster animation */
     }
 
     .flow-enode-wrapper.ghost {
@@ -202,11 +264,13 @@
         width: 30px;
         height: 30px;
         border-radius: 50%;
+        border: 2px solid #000000; /* Solid black border */
+        background: var(--identity-color); /* Use the hash-based color */
+        box-sizing: border-box;
         top: 50%;
         left: 50%;
         transform: translate(-50%, -50%);
-        opacity: 0.25;
-        z-index: 0;
+        z-index: 1; /* Above background, below text */
         pointer-events: none;
     }
 
@@ -215,17 +279,21 @@
         height: 100%;
         padding: 2px;
         box-sizing: border-box;
+        position: relative;
+        z-index: 2; /* Above identity circle */
     }
 
     svg {
         width: 100%;
         height: 100%;
+        position: relative;
+        z-index: 3; /* Ensure text is above circle */
     }
 
     text {
         font-family: monospace;
         font-weight: bold;
-        fill: #374151;
+        fill: var(--text-color, #374151);
         font-size: 30px; /* Base size, will scale down */
     }
 

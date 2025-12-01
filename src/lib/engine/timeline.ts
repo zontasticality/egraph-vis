@@ -86,7 +86,8 @@ export class TimelineEngine implements EGraphEngine {
                 const rebuildIterator = rebuildGen(this.runtime);
                 for (const step of rebuildIterator) {
                     // Emit snapshot with the specific phase (compact or repair)
-                    this.emitSnapshot(step.phase, matches);
+                    // Pass the active e-class ID to highlight just that class
+                    this.emitSnapshot(step.phase, matches, step.eclassId);
                 }
             }
 
@@ -143,7 +144,7 @@ export class TimelineEngine implements EGraphEngine {
         build(pattern);
     }
 
-    private emitSnapshot(phase: EGraphState['phase'], matches: any[] = []) {
+    private emitSnapshot(phase: EGraphState['phase'], matches: any[] = [], activeId?: number) {
         const prevState = this.timeline.states[this.timeline.states.length - 1];
 
         // If no previous state, create initial empty state
@@ -297,7 +298,8 @@ export class TimelineEngine implements EGraphEngine {
                     hashconsValid: true // Assumed true for now
                 },
                 selectionHints: [], // Populated by controller/UI
-                timestamp: Date.now()
+                timestamp: Date.now(),
+                activeId: activeId
             };
         });
 

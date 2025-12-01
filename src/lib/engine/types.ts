@@ -54,6 +54,7 @@ export interface StepMetadata {
     selectionHints: Array<{ type: 'eclass' | 'enode' | 'hashcons'; id: number | string }>;
     haltedReason?: 'saturated' | 'iteration-cap' | 'canceled';
     timestamp?: number;
+    activeId?: number; // ID of the e-class being processed (for compact/repair highlighting)
 }
 
 export interface MatchEvent {
