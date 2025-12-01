@@ -240,10 +240,57 @@ export class TimelineEngine implements EGraphEngine {
             draft.metadata = {
                 diffs: [...this.runtime.diffs], // Copy current diffs
                 matches: matches.map(m => {
-                    // Extract node IDs from the matched class
-                    const eclass = this.runtime.eclasses.get(m.eclassId);
-                    const nodes = eclass ? eclass.nodes : [];
-                    return { rule: m.rule.name, nodes };
+                    // Extract only the nodes that structurally match the pattern
+                    const matchedNodeIds = new Set<number>();
+
+                    // Helper to collect nodes that match a specific pattern structure
+                    const collectMatchedNodes = (eclassId: number, pattern: Pattern | string | number) => {
+                        const canonicalId = this.runtime.find(eclassId);
+                        const eclass = this.runtime.eclasses.get(canonicalId);
+                        if (!eclass) return;
+
+                        // For variables, collect ALL nodes in the matched e-class
+                        // The variable matched this entire e-class, so all nodes should be highlighted
+                        if (typeof pattern === 'string' && pattern.startsWith('?')) {
+                            for (const nodeId of eclass.nodes) {
+                                matchedNodeIds.add(nodeId);
+                            }
+                            return;
+                        }
+
+                        // For structural patterns, find matching nodes
+                        if (typeof pattern === 'object' && 'op' in pattern) {
+                            for (const nodeId of eclass.nodes) {
+                                const node = this.runtime.nodes[nodeId];
+                                // Only include nodes that match the operator
+                                if (node && node.op === pattern.op) {
+                                    matchedNodeIds.add(nodeId);
+                                    // Recursively collect from arguments
+                                    pattern.args.forEach((argPattern, index) => {
+                                        if (index < node.args.length) {
+                                            collectMatchedNodes(node.args[index], argPattern);
+                                        }
+                                    });
+                                }
+                            }
+                        } else if (typeof pattern === 'string') {
+                            // Constant pattern like "foo" - match nodes with that op
+                            for (const nodeId of eclass.nodes) {
+                                const node = this.runtime.nodes[nodeId];
+                                if (node && node.op === pattern && node.args.length === 0) {
+                                    matchedNodeIds.add(nodeId);
+                                }
+                            }
+                        }
+                    };
+
+                    // Start collection from the root matched class
+                    collectMatchedNodes(m.eclassId, m.rule.lhs);
+
+                    return {
+                        rule: m.rule.name,
+                        nodes: Array.from(matchedNodeIds).sort((a, b) => a - b)
+                    };
                 }),
                 invariants: {
                     congruenceValid: this.runtime.worklist.size === 0,

@@ -22,8 +22,24 @@
     // Selection state
     $: isSelected = $interactionStore.selection?.nodeIds.has(data.id) ?? false;
 
-    // Ghost state (non-canonical node)
-    $: isGhost = !($currentState?.unionFind[data.id]?.isCanonical ?? true);
+    // Ghost state: A node is canonical if all its arguments point to canonical e-class IDs
+    // This implements the congruence invariant visualization
+    $: isGhost = (() => {
+        if (!$currentState) return false;
+
+        // Check each argument: is it pointing to the canonical e-class?
+        for (const argClassId of data.args) {
+            const canonicalId =
+                $currentState.unionFind[argClassId]?.canonical ?? argClassId;
+            // If any argument is non-canonical, this node is non-canonical (ghost it)
+            if (canonicalId !== argClassId) {
+                return true;
+            }
+        }
+
+        // All arguments are canonical, so this node is canonical
+        return false;
+    })();
 
     // Phase-based state detection
     $: isMatched =
@@ -31,6 +47,7 @@
             m.nodes.includes(data.id),
         ) ?? false;
 
+    // Check if this node is being added (any type)
     $: isInDiff =
         $currentState?.metadata.diffs.some(
             (d) =>
@@ -38,10 +55,16 @@
                 (d.type === "rewrite" && d.createdId === data.id),
         ) ?? false;
 
-    // Check if this node is the RHS of a rewrite being applied (highlight yellow in write mode)
-    $: isRHS =
+    // Check if this is specifically a RHS node from a rewrite (should be yellow)
+    $: isRHSCreated =
         $currentState?.metadata.diffs.some(
             (d) => d.type === "rewrite" && d.createdId === data.id,
+        ) ?? false;
+
+    // Check if this is a plain addition (not from rewrite, should be red)
+    $: isPlainAdd =
+        $currentState?.metadata.diffs.some(
+            (d) => d.type === "add" && d.nodeId === data.id,
         ) ?? false;
 
     $: isInWorklist = $currentState?.worklist.includes(data.id) ?? false;
@@ -49,10 +72,18 @@
     // Compute state-based colors
     $: borderColor = (() => {
         const phase = $currentState?.phase;
-        // In write mode, show RHS nodes being created as yellow (not red)
-        if (phase === "write" && isRHS) return "#eab308"; // Yellow for RHS
-        if (phase === "read" && isMatched) return "#eab308"; // Yellow for matched LHS
-        if (phase === "write" && isInDiff && !isRHS) return "#dc2626"; // Red for other diffs
+
+        // Read phase: LHS matched in yellow
+        if (phase === "read" && isMatched) return "#eab308";
+
+        // Write phase:
+        if (phase === "write") {
+            // LHS match tree stays yellow
+            if (isMatched) return "#eab308";
+            // All new nodes (plain add or RHS rewrite): red
+            if (isPlainAdd || isRHSCreated) return "#dc2626";
+        }
+
         if (phase === "compact" && !isGhost) return "#f97316"; // Orange
         if (phase === "repair" && isInWorklist) return "#3b82f6"; // Blue
         if (isSelected) return "#2563eb"; // Selected blue
@@ -61,9 +92,18 @@
 
     $: backgroundColor = (() => {
         const phase = $currentState?.phase;
-        if (phase === "write" && isRHS) return "#fef3c7"; // Yellow bg for RHS
+
+        // Read phase: LHS matched
         if (phase === "read" && isMatched) return "#fef3c7";
-        if (phase === "write" && isInDiff && !isRHS) return "#fef2f2";
+
+        // Write phase:
+        if (phase === "write") {
+            // LHS match tree stays yellow
+            if (isMatched) return "#fef3c7";
+            // All new nodes (plain add or RHS rewrite): red
+            if (isPlainAdd || isRHSCreated) return "#fef2f2";
+        }
+
         if (phase === "compact" && !isGhost) return "#fff7ed";
         if (phase === "repair" && isInWorklist) return "#eff6ff";
         if (isSelected) return "#eff6ff";
