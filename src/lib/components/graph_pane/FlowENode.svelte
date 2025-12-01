@@ -22,24 +22,13 @@
     // Selection state
     $: isSelected = $interactionStore.selection?.nodeIds.has(data.id) ?? false;
 
-    // Ghost state: A node is canonical if all its arguments point to canonical e-class IDs
-    // This implements the congruence invariant visualization
-    $: isGhost = (() => {
-        if (!$currentState) return false;
-
-        // Check each argument: is it pointing to the canonical e-class?
-        for (const argClassId of data.args) {
-            const canonicalId =
-                $currentState.unionFind[argClassId]?.canonical ?? argClassId;
-            // If any argument is non-canonical, this node is non-canonical (ghost it)
-            if (canonicalId !== argClassId) {
-                return true;
-            }
-        }
-
-        // All arguments are canonical, so this node is canonical
-        return false;
-    })();
+    // Check if this node is "non-canonical" (ghost)
+    // A node is non-canonical if any of its arguments point to a non-canonical e-class ID
+    // This is the congruence invariant: f(a) ~ f(b) if a ~ b
+    $: isNonCanonicalNode = data.args.some((argId) => {
+        const argClass = $currentState?.unionFind[argId];
+        return argClass && !argClass.isCanonical;
+    });
 
     // Phase-based state detection
     $: isMatched =
@@ -84,28 +73,16 @@
             if (isPlainAdd || isRHSCreated) return "#ef4444";
         }
 
-        // Compact phase: Highlight only the active e-class being compacted
-        if (phase === "compact") {
-            const activeId = $currentState?.metadata.activeId;
-            // Check if this node belongs to the active e-class
-            // Note: data.eclassId is the e-class this node belongs to
-            if (
-                activeId !== undefined &&
-                data.eclassId === activeId &&
-                !isGhost
-            ) {
-                return "#fb923c"; // Orange
-            }
+        // Compact phase: Highlight non-canonical nodes in Red
+        if (phase === "compact" && isNonCanonicalNode) {
+            return "#ef4444"; // Red
         }
 
-        // Repair phase: Highlight only the active e-class being repaired
+        // Repair phase: Highlight nodes that are parents of the active e-class
+        // These are the nodes being "repaired" (re-canonicalized)
         if (phase === "repair") {
             const activeId = $currentState?.metadata.activeId;
-            if (
-                activeId !== undefined &&
-                data.eclassId === activeId &&
-                isInWorklist
-            ) {
+            if (activeId !== undefined && data.args.includes(activeId)) {
                 return "#3b82f6"; // Blue
             }
         }
@@ -128,27 +105,17 @@
             if (isPlainAdd || isRHSCreated) return "#ef4444";
         }
 
-        // Compact phase: Highlight only active e-class
-        if (phase === "compact") {
-            const activeId = $currentState?.metadata.activeId;
-            if (
-                activeId !== undefined &&
-                data.eclassId === activeId &&
-                !isGhost
-            ) {
-                return "#fb923c";
-            }
+        // Compact phase: Highlight non-canonical nodes in Red
+        // These are the nodes that need to be repaired
+        if (phase === "compact" && isNonCanonicalNode) {
+            return "#ef4444"; // Red
         }
 
-        // Repair phase: Highlight only active e-class
+        // Repair phase: Highlight nodes that are parents of the active e-class
         if (phase === "repair") {
             const activeId = $currentState?.metadata.activeId;
-            if (
-                activeId !== undefined &&
-                data.eclassId === activeId &&
-                isInWorklist
-            ) {
-                return "#3b82f6";
+            if (activeId !== undefined && data.args.includes(activeId)) {
+                return "#3b82f6"; // Blue
             }
         }
 
@@ -187,7 +154,7 @@
 
 <div
     class="flow-enode-wrapper"
-    class:ghost={isGhost}
+    class:ghost={isNonCanonicalNode}
     style:--border-color={borderColor}
     style:--bg-color={backgroundColor}
     style:--text-color={textColor}

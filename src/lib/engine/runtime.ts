@@ -6,6 +6,20 @@ import type {
     ParentInfo
 } from './types';
 
+export class SeededRandom {
+    private seed: number;
+
+    constructor(seed: number) {
+        this.seed = seed;
+    }
+
+    next(): number {
+        // Simple LCG (Linear Congruential Generator)
+        this.seed = (this.seed * 1103515245 + 12345) & 0x7fffffff;
+        return this.seed / 0x7fffffff;
+    }
+}
+
 export class UnionFind {
     private parent: number[] = [];
 
@@ -29,7 +43,7 @@ export class UnionFind {
         return this.parent[id];
     }
 
-    union(a: number, b: number): number {
+    union(a: number, b: number, rng?: SeededRandom): number {
         const rootA = this.find(a);
         const rootB = this.find(b);
 
@@ -37,9 +51,25 @@ export class UnionFind {
             return rootA;
         }
 
-        // Smaller ID wins strategy for visual stability
-        const winner = Math.min(rootA, rootB);
-        const loser = Math.max(rootA, rootB);
+        // Use seeded randomness if provided, otherwise min-ID strategy
+        let winner: number, loser: number;
+        if (rng) {
+            const randomValue = rng.next();
+            console.log(`[UnionFind] union(${rootA}, ${rootB}) - random=${randomValue.toFixed(3)}`);
+            if (randomValue > 0.5) {
+                winner = Math.max(rootA, rootB);
+                loser = Math.min(rootA, rootB);
+                console.log(`  → Chose MAX: winner=${winner}, loser=${loser}`);
+            } else {
+                winner = Math.min(rootA, rootB);
+                loser = Math.max(rootA, rootB);
+                console.log(`  → Chose MIN: winner=${winner}, loser=${loser}`);
+            }
+        } else {
+            winner = Math.min(rootA, rootB);
+            loser = Math.max(rootA, rootB);
+            console.log(`[UnionFind] union(${rootA}, ${rootB}) - NO RNG, chose MIN: winner=${winner}`);
+        }
 
         this.parent[loser] = winner;
         return winner;
@@ -102,7 +132,7 @@ export class EGraphRuntime {
         return id;
     }
 
-    merge(a: ENodeId, b: ENodeId, implementation: 'naive' | 'deferred' = 'naive'): ENodeId {
+    merge(a: ENodeId, b: ENodeId, implementation: 'naive' | 'deferred' = 'naive', rng?: SeededRandom): ENodeId {
         const rootA = this.find(a);
         const rootB = this.find(b);
 
@@ -110,7 +140,8 @@ export class EGraphRuntime {
             return rootA;
         }
 
-        const winner = this.unionFind.union(rootA, rootB);
+        console.log(`[EGraphRuntime] merge(${a}, ${b}) -> union(${rootA}, ${rootB}), RNG=${rng ? 'YES' : 'NO'}`);
+        const winner = this.unionFind.union(rootA, rootB, rng);
         const loser = winner === rootA ? rootB : rootA;
 
         const winnerClass = this.eclasses.get(winner)!;

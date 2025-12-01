@@ -1,5 +1,5 @@
 import { create } from 'mutative';
-import { EGraphRuntime } from './runtime';
+import { EGraphRuntime, SeededRandom } from './runtime';
 import { rebuild, collectMatches, applyMatches, applyMatchesGen, rebuildGen } from './algorithms';
 import type {
     EGraphEngine,
@@ -18,8 +18,9 @@ export class TimelineEngine implements EGraphEngine {
     private runtime: EGraphRuntime;
     private timeline: EGraphTimeline;
     private viewModelCache = new Map<number, { version: number, vm: EClassViewModel }>();
-    private options: EngineOptions = { implementation: 'deferred' };
+    private options: EngineOptions = { implementation: 'deferred', seed: 4 };
     private currentPresetId = '';
+    private rng?: SeededRandom; // Seeded RNG for union-find
 
     constructor() {
         this.runtime = new EGraphRuntime();
@@ -27,12 +28,18 @@ export class TimelineEngine implements EGraphEngine {
     }
 
     loadPreset(preset: PresetConfig, options: EngineOptions): void {
-        this.options = { ...preset.implementationHints, ...options };
+        // Merge options: defaults → preset hints → passed options
+        const defaults = { implementation: 'deferred' as const, seed: 1 };
+        this.options = { ...defaults, ...preset.implementationHints, ...options };
         this.currentPresetId = preset.id;
         this.rewrites = preset.rewrites; // Store rewrites
         this.runtime = new EGraphRuntime();
         this.viewModelCache.clear();
         this.timeline = this.createEmptyTimeline();
+
+        // Initialize RNG if seed is provided
+        this.rng = this.options.seed !== undefined ? new SeededRandom(this.options.seed) : undefined;
+        console.log('[TimelineEngine] RNG initialized:', this.rng ? `seed=${this.options.seed}` : 'no seed');
 
         // Initialize root
         this.instantiatePattern(preset.root);
@@ -58,7 +65,7 @@ export class TimelineEngine implements EGraphEngine {
             // 2. Write Phase (Fine-Grained)
             // In deferred mode, we apply all matches, then rebuild once
             // In naive mode, applyMatchesGen will rebuild after each rewrite
-            const applyGen = applyMatchesGen(this.runtime, matches, this.options.implementation);
+            const applyGen = applyMatchesGen(this.runtime, matches, this.options.implementation, this.rng);
 
             let hasChanges = false;
             for (const _step of applyGen) {

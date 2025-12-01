@@ -4,6 +4,7 @@
         interactionStore,
         isEClassFullySelected,
     } from "../../stores/interactionStore";
+    import { currentState } from "../../stores/timelineStore";
 
     export let data: {
         label?: string;
@@ -21,6 +22,30 @@
         $interactionStore.selection,
     );
 
+    // Active state for compact/repair phases
+    $: isActive = $currentState?.metadata.activeId === data.eclassId;
+    $: phase = $currentState?.phase;
+
+    $: borderColor = (() => {
+        if (isSelected) return "#2563eb";
+        if (isActive) {
+            if (phase === "compact") return "#fb923c"; // Orange
+            // Repair is now shown on the parent nodes, not the e-class
+        }
+        return data.color || "#999";
+    })();
+
+    $: backgroundColor = (() => {
+        if (isSelected) return "rgba(37, 99, 235, 0.05)";
+        if (isActive) {
+            if (phase === "compact") return "rgba(251, 146, 60, 0.1)"; // Orange tint
+        }
+        return data.lightColor || "rgba(240, 240, 240, 0.5)";
+    })();
+
+    $: borderWidth = isSelected || isActive ? "3px" : "2px";
+    $: borderStyle = isActive ? "solid" : "dashed";
+
     function handleClick(e: MouseEvent) {
         // Only handle clicks on the background, not child nodes
         if (e.target === e.currentTarget) {
@@ -34,8 +59,11 @@
 <div
     class="flow-eclass-group"
     class:selected={isSelected}
-    style:--color={data.color || "#999"}
-    style:--bg={data.lightColor || "rgba(240, 240, 240, 0.5)"}
+    class:active={isActive}
+    style:--border-color={borderColor}
+    style:--bg-color={backgroundColor}
+    style:--border-width={borderWidth}
+    style:--border-style={borderStyle}
     on:click={handleClick}
 >
     <!-- Target Handle for incoming edges from arguments -->
@@ -55,8 +83,8 @@
     .flow-eclass-group {
         width: 100%;
         height: 100%;
-        background: var(--bg);
-        border: 2px dashed var(--color);
+        background: var(--bg-color);
+        border: var(--border-width) var(--border-style) var(--border-color);
         border-radius: 8px;
         position: relative;
         box-sizing: border-box;
@@ -66,9 +94,7 @@
     }
 
     .flow-eclass-group.selected {
-        border-color: #2563eb;
-        border-width: 3px;
-        background: rgba(37, 99, 235, 0.05);
+        /* Styles handled by reactive variables now, but keeping class for specificity if needed */
         box-shadow: 0 0 0 2px #2563eb inset;
     }
 
@@ -76,7 +102,7 @@
         position: absolute;
         top: -1.5em;
         left: 0;
-        color: var(--color);
+        color: var(--border-color);
         font-weight: bold;
         font-size: 0.8rem;
         white-space: nowrap;

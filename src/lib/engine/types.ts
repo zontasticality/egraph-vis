@@ -87,6 +87,7 @@ export interface EngineOptions {
     recordDiffs?: boolean;
     debugInvariants?: boolean;
     maxNodes?: number;
+    seed?: number; // Seed for random union-find decisions
 }
 
 export interface EGraphEngine {

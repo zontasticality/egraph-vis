@@ -1,5 +1,6 @@
 import type { EGraphRuntime } from './runtime';
 import type { RewriteRule, Pattern, ENodeId, ENode } from './types';
+import { SeededRandom } from './runtime';
 
 export interface Match {
     rule: RewriteRule;
@@ -221,7 +222,8 @@ function mergeSubsts(a: Map<string, ENodeId>, b: Map<string, ENodeId>): Map<stri
 export function* applyMatchesGen(
     runtime: EGraphRuntime,
     matches: Match[],
-    impl: 'naive' | 'deferred'
+    impl: 'naive' | 'deferred',
+    rng?: SeededRandom
 ): Generator<{ match: Match; phase: 'apply' | 'rebuild' }> {
     for (const match of matches) {
         const { rule, eclassId, substitution } = match;
@@ -239,7 +241,7 @@ export function* applyMatchesGen(
         }
 
         // Perform merge
-        runtime.merge(target, actualNewId, impl);
+        runtime.merge(target, actualNewId, impl, rng);
 
         // Record rewrite diff
         runtime.diffs.push({
@@ -282,7 +284,8 @@ export function* rebuildGen(runtime: EGraphRuntime): Generator<{ phase: 'compact
             runtime.eclasses.delete(id);
 
             // Yield after each compaction
-            yield { phase: 'compact', eclassId: id };
+            // Yield the canonicalId (survivor) so we can highlight the class that absorbed the other
+            yield { phase: 'compact', eclassId: canonicalId };
         }
     }
 
