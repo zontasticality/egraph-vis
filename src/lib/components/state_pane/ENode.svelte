@@ -136,19 +136,21 @@
         padding: 1px 4px;
         font-size: 0.85rem;
         font-weight: 600;
-        background-color: var(--id-bg);
-        color: var(--id-color);
-        border: 1px solid transparent;
-        border-radius: 999px; /* Pill shape */
+        color: var(--id-color); /* Preserve identity color */
+        background-color: transparent; /* Use state background instead */
+        border: 1px solid var(--id-color); /* Preserve identity border */
+        border-radius: 999px;
+        transition: all 0.1s ease-out;
     }
 
     /* --- Symbol Mode --- */
     .mode-symbol {
         padding: 2px 6px;
         background: white;
-        border: 2px solid var(--id-color);
+        border: 2px solid var(--id-color); /* Preserve identity border */
         color: #374151;
         gap: 2px;
+        transition: all 0.1s ease-out;
     }
 
     /* --- Variants --- */
@@ -161,22 +163,22 @@
     /* Active States - Stage-Dependent Colors */
     .enode.type-read {
         background-color: #fef3c7; /* Yellow 100 */
-        border-color: #fbbf24; /* Yellow 400 */
+        border-color: #fbbf24; /* Yellow 400 - override identity */
     }
 
     .enode.type-write {
         background-color: #fecaca; /* Red 100 */
-        border-color: #f87171; /* Red 400 */
+        border-color: #f87171; /* Red 400 - override identity */
     }
 
     .enode.type-compact {
         background-color: #fed7aa; /* Orange 100 */
-        border-color: #fb923c; /* Orange 400 */
+        border-color: #fb923c; /* Orange 400 - override identity */
     }
 
     .enode.type-repair {
         background-color: #dbeafe; /* Blue 100 */
-        border-color: #60a5fa; /* Blue 400 */
+        border-color: #60a5fa; /* Blue 400 - override identity */
     }
 
     .variant-active {
@@ -195,7 +197,7 @@
         color: #9ca3af;
     }
 
-    /* --- Interaction States --- */
+    /* --- Interaction States (override active states) --- */
     .hovered {
         box-shadow: 0 0 0 2px #93c5fd; /* Ring-2 blue-300 */
         z-index: 5;
@@ -204,6 +206,7 @@
     .selected {
         box-shadow: 0 0 0 2px #2563eb; /* Ring-2 blue-600 */
         background-color: #eff6ff;
+        border-color: #2563eb; /* Override all other borders */
         z-index: 20;
     }
 

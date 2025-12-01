@@ -38,13 +38,21 @@
                 (d.type === "rewrite" && d.createdId === data.id),
         ) ?? false;
 
+    // Check if this node is the RHS of a rewrite being applied (highlight yellow in write mode)
+    $: isRHS =
+        $currentState?.metadata.diffs.some(
+            (d) => d.type === "rewrite" && d.createdId === data.id,
+        ) ?? false;
+
     $: isInWorklist = $currentState?.worklist.includes(data.id) ?? false;
 
     // Compute state-based colors
     $: borderColor = (() => {
         const phase = $currentState?.phase;
-        if (phase === "read" && isMatched) return "#eab308"; // Yellow
-        if (phase === "write" && isInDiff) return "#dc2626"; // Red
+        // In write mode, show RHS nodes being created as yellow (not red)
+        if (phase === "write" && isRHS) return "#eab308"; // Yellow for RHS
+        if (phase === "read" && isMatched) return "#eab308"; // Yellow for matched LHS
+        if (phase === "write" && isInDiff && !isRHS) return "#dc2626"; // Red for other diffs
         if (phase === "compact" && !isGhost) return "#f97316"; // Orange
         if (phase === "repair" && isInWorklist) return "#3b82f6"; // Blue
         if (isSelected) return "#2563eb"; // Selected blue
@@ -53,8 +61,9 @@
 
     $: backgroundColor = (() => {
         const phase = $currentState?.phase;
+        if (phase === "write" && isRHS) return "#fef3c7"; // Yellow bg for RHS
         if (phase === "read" && isMatched) return "#fef3c7";
-        if (phase === "write" && isInDiff) return "#fef2f2";
+        if (phase === "write" && isInDiff && !isRHS) return "#fef2f2";
         if (phase === "compact" && !isGhost) return "#fff7ed";
         if (phase === "repair" && isInWorklist) return "#eff6ff";
         if (isSelected) return "#eff6ff";

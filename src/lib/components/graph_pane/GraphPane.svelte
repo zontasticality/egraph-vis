@@ -37,10 +37,44 @@
 	// --- Interaction Handling ---
 
 	function handleNodeClick({ node }: { node: Node }) {
-		// Clicking E-Class group selects all nodes in the class
-		const nodeIds = node.data?.nodeIds as number[] | undefined;
-		if (nodeIds && nodeIds.length > 0) {
-			interactionStore.selectEClass(nodeIds);
+		// Determine node type and handle selection accordingly
+		const nodeType = node.type;
+
+		if (nodeType === "enode") {
+			// Individual E-Node clicked
+			const enodeId = node.data?.id as number | undefined;
+			if (enodeId !== undefined) {
+				interactionStore.selectENode(enodeId);
+			}
+		} else if (nodeType === "eclassGroup") {
+			// Inner E-Class group clicked - select all nodes in this class
+			const nodeIds = node.data?.nodeIds as number[] | undefined;
+			if (nodeIds && nodeIds.length > 0) {
+				interactionStore.selectEClass(nodeIds);
+			}
+		} else if (nodeType === "unionFindGroup") {
+			// Outer Union-Find group clicked - select all nodes in all classes in this set
+			// Collect all node IDs from all child E-Class groups
+			const allNodeIds: number[] = [];
+			const currentNodes = get(nodes);
+
+			// Find all eclassGroup children of this union-find group
+			currentNodes.forEach((n) => {
+				if (n.parentId === node.id && n.type === "eclassGroup") {
+					const childNodeIds = n.data?.nodeIds as
+						| number[]
+						| undefined;
+					if (childNodeIds) {
+						allNodeIds.push(...childNodeIds);
+					}
+				}
+			});
+
+			if (allNodeIds.length > 0) {
+				interactionStore.selectEClass(allNodeIds);
+			} else {
+				interactionStore.clearSelection();
+			}
 		} else {
 			interactionStore.clearSelection();
 		}
@@ -100,16 +134,12 @@
 					const classChildren: any[] = [];
 					const isCanonical = eclass.id === canonicalId;
 
-					// Determine styling based on canonical status
-					// Non-canonical (merged) classes get Red styling
-					let color = getColorForId(eclass.id);
-					let lightColor = getLightColorForId(eclass.id);
+					// E-Class groups use neutral gray (not hash-based)
+					const eclassColor = "#9ca3af"; // Neutral gray
+					const eclassLightColor = "rgba(156, 163, 175, 0.1)";
 
-					if (!isCanonical) {
-						// Red for merged/dirty classes
-						color = "#ef4444"; // Red 500
-						lightColor = "rgba(239, 68, 68, 0.1)";
-					}
+					// E-Nodes still use hash-based identity color (passed separately)
+					const enodeIdentityColor = getColorForId(eclass.id); // For handles
 
 					eclass.nodes.forEach((enode, index) => {
 						const nodeId = `node-${enode.id}`;
@@ -121,8 +151,8 @@
 							data: {
 								id: enode.id,
 								eclassId: eclass.id,
-								color: color,
-								enodeColor: getColorForId(enode.id), // E-Node identity color
+								color: enodeIdentityColor, // E-Node identity for handles
+								enodeColor: getColorForId(enode.id), // E-Node identity circle
 								args: enode.args,
 								label: enode.op,
 							},
@@ -140,8 +170,8 @@
 						},
 						data: {
 							eclassId: eclass.id,
-							color: color,
-							lightColor: lightColor,
+							color: eclassColor, // Neutral gray
+							lightColor: eclassLightColor,
 							isCanonical: isCanonical,
 							label: `ID: ${eclass.id}`,
 							nodeIds: eclass.nodes.map((n) => n.id), // For selection logic
@@ -165,12 +195,15 @@
 				});
 			}
 		} else {
-			// Naive mode: render E-Classes directly
 			for (const eclass of state.eclasses) {
 				const classChildren: any[] = [];
 
-				const color = getColorForId(eclass.id);
-				const lightColor = getLightColorForId(eclass.id);
+				// E-Class groups use neutral gray
+				const eclassColor = "#9ca3af";
+				const eclassLightColor = "rgba(156, 163, 175, 0.1)";
+
+				// E-Nodes use hash-based identity color
+				const enodeIdentityColor = getColorForId(eclass.id);
 
 				eclass.nodes.forEach((enode, index) => {
 					const nodeId = `node-${enode.id}`;
@@ -182,7 +215,7 @@
 						data: {
 							id: enode.id,
 							eclassId: eclass.id,
-							color: color,
+							color: enodeIdentityColor,
 							enodeColor: getColorForId(enode.id), // E-Node identity color
 							args: enode.args,
 							label: enode.op,
@@ -201,8 +234,8 @@
 					},
 					data: {
 						eclassId: eclass.id,
-						color: color,
-						lightColor: lightColor,
+						color: eclassColor, // Neutral gray
+						lightColor: eclassLightColor,
 						isCanonical: true,
 						label: `ID: ${eclass.id}`,
 						nodeIds: eclass.nodes.map((n) => n.id), // For selection logic
