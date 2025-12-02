@@ -30,6 +30,12 @@
         return argClass && !argClass.isCanonical;
     });
 
+    // Helper to check if a specific port (argument) is non-canonical
+    function isPortNonCanonical(argId: number): boolean {
+        const argClass = $currentState?.unionFind[argId];
+        return argClass ? !argClass.isCanonical : false;
+    }
+
     // Phase-based state detection
     $: isMatched =
         $currentState?.metadata.matches.some((m) =>
@@ -73,15 +79,20 @@
             if (isPlainAdd || isRHSCreated) return "#ef4444";
         }
 
-        // Compact phase: Highlight non-canonical nodes in Red
-        if (phase === "compact" && isNonCanonicalNode) {
-            return "#ef4444"; // Red
-        }
+        // Compact phase: Non-canonical nodes use dashed border (handled separately)
+        // Border color still red, but style is dashed
 
         // Repair phase: Highlight nodes that are parents of the active e-class
         // These are the nodes being "repaired" (re-canonicalized)
         if (phase === "repair") {
             const activeId = $currentState?.metadata.activeId;
+            if (data.id === 3) {
+                console.log(
+                    `[Repair Border] Node ${data.id}: phase=${phase}, activeId=${activeId}, args=`,
+                    data.args,
+                    `includes=${data.args.includes(activeId!)}`,
+                );
+            }
             if (activeId !== undefined && data.args.includes(activeId)) {
                 return "#3b82f6"; // Blue
             }
@@ -105,11 +116,8 @@
             if (isPlainAdd || isRHSCreated) return "#ef4444";
         }
 
-        // Compact phase: Highlight non-canonical nodes in Red
-        // These are the nodes that need to be repaired
-        if (phase === "compact" && isNonCanonicalNode) {
-            return "#ef4444"; // Red
-        }
+        // Compact phase: Keep background normal for non-canonical nodes
+        // (red dashed border is enough to show non-canonicality)
 
         // Repair phase: Highlight nodes that are parents of the active e-class
         if (phase === "repair") {
@@ -121,6 +129,15 @@
 
         if (isSelected) return "#3b82f6";
         return "white";
+    })();
+
+    // Border style: dashed for non-canonical nodes in compact phase
+    $: borderStyle = (() => {
+        const phase = $currentState?.phase;
+        if (phase === "compact" && isNonCanonicalNode) {
+            return "dashed";
+        }
+        return "solid";
     })();
 
     // Text color for contrast on vibrant backgrounds
@@ -156,6 +173,7 @@
     class="flow-enode-wrapper"
     class:ghost={isNonCanonicalNode}
     style:--border-color={borderColor}
+    style:--border-style={borderStyle}
     style:--bg-color={backgroundColor}
     style:--text-color={textColor}
     style:--identity-color={data.enodeColor}
@@ -186,6 +204,7 @@
 
     <!-- Argument Ports (Bottom) -->
     {#each data.args as argId, i}
+        {@const portIsNonCanonical = isPortNonCanonical(argId)}
         <!-- svelte-ignore a11y-no-static-element-interactions -->
         <div
             class="port-handle-wrapper"
@@ -197,7 +216,9 @@
                 id={`port-${data.id}-${i}`}
                 type="source"
                 position={Position.Bottom}
-                style="width: 100%; height: 100%; background: var(--color); border: 1px solid white; top: 0; left: 0; transform: none; position: relative;"
+                style="width: 100%; height: 100%; background: {portIsNonCanonical
+                    ? '#ef4444'
+                    : 'var(--color)'}; border: 1px solid white; top: 0; left: 0; transform: none; position: relative;"
             />
         </div>
     {/each}
@@ -208,7 +229,7 @@
         width: 100%;
         height: 100%;
         background: var(--bg-color);
-        border: 2px solid var(--border-color);
+        border: 2px var(--border-style, solid) var(--border-color);
         border-radius: 6px;
         display: flex;
         flex-direction: column;
@@ -219,11 +240,6 @@
         overflow: visible;
         cursor: pointer;
         transition: all 0.1s ease-out; /* Faster animation */
-    }
-
-    .flow-enode-wrapper.ghost {
-        opacity: 0.5;
-        border-style: dashed;
     }
 
     .identity-circle {

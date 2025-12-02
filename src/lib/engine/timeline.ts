@@ -39,7 +39,6 @@ export class TimelineEngine implements EGraphEngine {
 
         // Initialize RNG if seed is provided
         this.rng = this.options.seed !== undefined ? new SeededRandom(this.options.seed) : undefined;
-        console.log('[TimelineEngine] RNG initialized:', this.rng ? `seed=${this.options.seed}` : 'no seed');
 
         // Initialize root
         this.instantiatePattern(preset.root);
@@ -211,7 +210,7 @@ export class TimelineEngine implements EGraphEngine {
                             return {
                                 id: nodeId,
                                 op: n.op,
-                                args: n.args.map(arg => this.runtime.find(arg)) // Canonicalize args for UI
+                                args: n.args // Keep original args (non-canonical) so UI can detect non-canonical nodes
                             };
                         }).sort((a, b) => a.op.localeCompare(b.op)), // Sort nodes
                         parents: Array.from(runtimeClass.parents.values()).map(p => ({
