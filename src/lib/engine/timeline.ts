@@ -78,7 +78,8 @@ export class TimelineEngine implements EGraphEngine {
                     const rebuildIterator = rebuildGen(this.runtime);
                     for (const step of rebuildIterator) {
                         // Emit snapshot with the specific phase (compact or repair)
-                        this.emitSnapshot(step.phase, matches);
+                        // Don't pass matches during rebuild - they're not relevant to rebuild phases
+                        this.emitSnapshot(step.phase, [], step.eclassId);
                     }
                 }
             }
@@ -168,6 +169,115 @@ export class TimelineEngine implements EGraphEngine {
         build(pattern);
     }
 
+
+    /**
+     * Build an EClassViewModel from runtime data, using cache when possible.
+     */
+    private buildEClassViewModel(id: number): EClassViewModel {
+        const runtimeClass = this.runtime.eclasses.get(id)!;
+        const cached = this.viewModelCache.get(id);
+
+        if (cached && cached.version === runtimeClass.version) {
+            return cached.vm;
+        }
+
+        // Create new ViewModel
+        const vm: EClassViewModel = {
+            id,
+            nodes: runtimeClass.nodes.map(nodeId => {
+                const n = this.runtime.nodes[nodeId];
+                return {
+                    id: nodeId,
+                    op: n.op,
+                    args: n.args // Keep original args (non-canonical) so UI can detect non-canonical nodes
+                };
+            }).sort((a, b) => a.op.localeCompare(b.op)), // Sort nodes
+            parents: Array.from(runtimeClass.parents.values()).map(p => ({
+                parentId: this.runtime.find(p.parentId), // Canonicalize parent ID too
+                op: p.enode.op
+            })),
+            inWorklist: this.runtime.worklist.has(id)
+        };
+
+        this.viewModelCache.set(id, { version: runtimeClass.version, vm });
+        return vm;
+    }
+
+    /**
+     * Collect all node IDs that match a specific pattern structure.
+     * Used for highlighting matched nodes during the read phase.
+     */
+    private collectMatchedNodes(eclassId: number, pattern: Pattern | string | number): Set<number> {
+        const matchedNodeIds = new Set<number>();
+        const canonicalId = this.runtime.find(eclassId);
+        const eclass = this.runtime.eclasses.get(canonicalId);
+        if (!eclass) return matchedNodeIds;
+
+        // For variables, collect ALL nodes in the matched e-class
+        // The variable matched this entire e-class, so all nodes should be highlighted
+        if (typeof pattern === 'string' && pattern.startsWith('?')) {
+            for (const nodeId of eclass.nodes) {
+                matchedNodeIds.add(nodeId);
+            }
+            return matchedNodeIds;
+        }
+
+        // For structural patterns, find matching nodes
+        if (typeof pattern === 'object' && 'op' in pattern) {
+            for (const nodeId of eclass.nodes) {
+                const node = this.runtime.nodes[nodeId];
+                // Only include nodes that match the operator
+                if (node && node.op === pattern.op) {
+                    matchedNodeIds.add(nodeId);
+                    // Recursively collect from arguments
+                    pattern.args.forEach((argPattern, index) => {
+                        if (index < node.args.length) {
+                            const childMatches = this.collectMatchedNodes(node.args[index], argPattern);
+                            for (const childId of childMatches) {
+                                matchedNodeIds.add(childId);
+                            }
+                        }
+                    });
+                }
+            }
+        } else if (typeof pattern === 'string') {
+            // Constant pattern like "foo" - match nodes with that op
+            for (const nodeId of eclass.nodes) {
+                const node = this.runtime.nodes[nodeId];
+                if (node && node.op === pattern && node.args.length === 0) {
+                    matchedNodeIds.add(nodeId);
+                }
+            }
+        }
+
+        return matchedNodeIds;
+    }
+
+    /**
+     * Build step metadata from current runtime state and matches.
+     */
+    private buildMetadata(matches: any[], activeId?: number): StepMetadata {
+        return {
+            diffs: [...this.runtime.diffs], // Copy current diffs
+            matches: matches.map(m => {
+                // Extract only the nodes that structurally match the pattern
+                const matchedNodeIds = this.collectMatchedNodes(m.eclassId, m.rule.lhs);
+
+                return {
+                    rule: m.rule.name,
+                    nodes: Array.from(matchedNodeIds).sort((a, b) => a - b)
+                };
+            }),
+            invariants: {
+                congruenceValid: this.runtime.worklist.size === 0,
+                hashconsValid: true // Assumed true for now
+            },
+            selectionHints: [], // Populated by controller/UI
+            timestamp: Date.now(),
+            activeId: activeId
+        };
+    }
+
     private emitSnapshot(phase: EGraphState['phase'], matches: any[] = [], activeId?: number) {
         const prevState = this.timeline.states[this.timeline.states.length - 1];
 
@@ -214,40 +324,8 @@ export class TimelineEngine implements EGraphEngine {
             }
 
             // 2. Update EClasses
-            const newEClasses: EClassViewModel[] = [];
             const sortedIds = Array.from(this.runtime.eclasses.keys()).sort((a, b) => a - b);
-
-            for (const id of sortedIds) {
-                const runtimeClass = this.runtime.eclasses.get(id)!;
-                const cached = this.viewModelCache.get(id);
-
-                if (cached && cached.version === runtimeClass.version) {
-                    newEClasses.push(cached.vm);
-                } else {
-                    // Create new ViewModel
-                    const vm: EClassViewModel = {
-                        id,
-                        nodes: runtimeClass.nodes.map(nodeId => {
-                            const n = this.runtime.nodes[nodeId];
-                            return {
-                                id: nodeId,
-                                op: n.op,
-                                args: n.args // Keep original args (non-canonical) so UI can detect non-canonical nodes
-                            };
-                        }).sort((a, b) => a.op.localeCompare(b.op)), // Sort nodes
-                        parents: Array.from(runtimeClass.parents.values()).map(p => ({
-                            parentId: this.runtime.find(p.parentId), // Canonicalize parent ID too
-                            op: p.enode.op
-                        })), // Sort parents? Spec doesn't strictly say, but good for stability
-                        inWorklist: this.runtime.worklist.has(id)
-                    };
-
-                    this.viewModelCache.set(id, { version: runtimeClass.version, vm });
-                    newEClasses.push(vm);
-                }
-            }
-
-            draft.eclasses = newEClasses;
+            draft.eclasses = sortedIds.map(id => this.buildEClassViewModel(id));
 
             // 3. Update Node Chunks (Append-only)
             // We use the ChunkedArray helper to wrap the draft's chunks array
@@ -266,69 +344,7 @@ export class TimelineEngine implements EGraphEngine {
             draft.worklist = Array.from(this.runtime.worklist).sort((a, b) => a - b);
 
             // 5. Metadata
-            draft.metadata = {
-                diffs: [...this.runtime.diffs], // Copy current diffs
-                matches: matches.map(m => {
-                    // Extract only the nodes that structurally match the pattern
-                    const matchedNodeIds = new Set<number>();
-
-                    // Helper to collect nodes that match a specific pattern structure
-                    const collectMatchedNodes = (eclassId: number, pattern: Pattern | string | number) => {
-                        const canonicalId = this.runtime.find(eclassId);
-                        const eclass = this.runtime.eclasses.get(canonicalId);
-                        if (!eclass) return;
-
-                        // For variables, collect ALL nodes in the matched e-class
-                        // The variable matched this entire e-class, so all nodes should be highlighted
-                        if (typeof pattern === 'string' && pattern.startsWith('?')) {
-                            for (const nodeId of eclass.nodes) {
-                                matchedNodeIds.add(nodeId);
-                            }
-                            return;
-                        }
-
-                        // For structural patterns, find matching nodes
-                        if (typeof pattern === 'object' && 'op' in pattern) {
-                            for (const nodeId of eclass.nodes) {
-                                const node = this.runtime.nodes[nodeId];
-                                // Only include nodes that match the operator
-                                if (node && node.op === pattern.op) {
-                                    matchedNodeIds.add(nodeId);
-                                    // Recursively collect from arguments
-                                    pattern.args.forEach((argPattern, index) => {
-                                        if (index < node.args.length) {
-                                            collectMatchedNodes(node.args[index], argPattern);
-                                        }
-                                    });
-                                }
-                            }
-                        } else if (typeof pattern === 'string') {
-                            // Constant pattern like "foo" - match nodes with that op
-                            for (const nodeId of eclass.nodes) {
-                                const node = this.runtime.nodes[nodeId];
-                                if (node && node.op === pattern && node.args.length === 0) {
-                                    matchedNodeIds.add(nodeId);
-                                }
-                            }
-                        }
-                    };
-
-                    // Start collection from the root matched class
-                    collectMatchedNodes(m.eclassId, m.rule.lhs);
-
-                    return {
-                        rule: m.rule.name,
-                        nodes: Array.from(matchedNodeIds).sort((a, b) => a - b)
-                    };
-                }),
-                invariants: {
-                    congruenceValid: this.runtime.worklist.size === 0,
-                    hashconsValid: true // Assumed true for now
-                },
-                selectionHints: [], // Populated by controller/UI
-                timestamp: Date.now(),
-                activeId: activeId
-            };
+            draft.metadata = this.buildMetadata(matches, activeId);
         });
 
         this.timeline.states.push(nextState);

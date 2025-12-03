@@ -92,7 +92,7 @@
         box-sizing: border-box;
         overflow: visible;
         cursor: pointer;
-        opacity: var(--opacity, 1.0);
+        opacity: var(--opacity, 1);
         transition: all 0.15s ease-out;
     }
 

@@ -1,6 +1,14 @@
 import ELK from 'elkjs';
 import type { EGraphState, EGraphTimeline, LayoutData } from './types';
 import { create } from 'mutative';
+import {
+    DEFAULT_LAYOUT_CONFIG,
+    ENODE_LAYOUT,
+    CONTAINER_PADDING,
+    toELKOptions,
+    toPaddingString,
+    type LayoutConfig,
+} from './layoutConfig';
 
 /**
  * Layout Manager for progressive precomputation of ELK graph layouts.
@@ -11,9 +19,23 @@ export class LayoutManager {
     private layouts = new Map<number, LayoutData>();
     private pending = new Map<number, Promise<LayoutData>>();
     private computing = new Set<number>();
+    private config: LayoutConfig;
+    private listeners: ((index: number) => void)[] = [];
+    private currentRunId = 0;
 
-    constructor() {
+    constructor(config: LayoutConfig = DEFAULT_LAYOUT_CONFIG) {
         this.elk = new ELK();
+        this.config = config;
+    }
+
+    /**
+     * Subscribe to layout completion events
+     */
+    subscribe(listener: (index: number) => void): () => void {
+        this.listeners.push(listener);
+        return () => {
+            this.listeners = this.listeners.filter(l => l !== listener);
+        };
     }
 
     /**
@@ -21,11 +43,20 @@ export class LayoutManager {
      * Returns immediately after first layout is complete.
      */
     async precomputeAll(timeline: EGraphTimeline): Promise<void> {
+        // Cancel any previous run
+        this.currentRunId++;
+        const runId = this.currentRunId;
+        this.clear();
+
         if (timeline.states.length === 0) return;
 
         // SYNC: Compute first layout (required for initial render)
         console.log('[LayoutManager] Computing first layout synchronously...');
         const firstLayout = await this.computeLayout(timeline.states[0]);
+
+        // Check if run was cancelled during await
+        if (runId !== this.currentRunId) return;
+
         this.layouts.set(0, firstLayout);
 
         // Update the first state with its layout
@@ -40,6 +71,9 @@ export class LayoutManager {
         for (let i = 1; i < timeline.states.length; i++) {
             const index = i;
             setTimeout(() => {
+                // Check if this run is still active
+                if (runId !== this.currentRunId) return;
+
                 const prevLayout = this.layouts.get(index - 1);
                 this.startLayoutComputation(index, timeline, prevLayout);
             }, 0);
@@ -76,6 +110,9 @@ export class LayoutManager {
             if (index % 10 === 0 || index === timeline.states.length - 1) {
                 console.log(`[LayoutManager] Computed ${index + 1}/${timeline.states.length} layouts`);
             }
+
+            // Notify listeners
+            this.listeners.forEach(l => l(index));
         }).catch(err => {
             console.error(`[LayoutManager] Layout computation failed for snapshot ${index}:`, err);
             this.pending.delete(index);
@@ -148,8 +185,8 @@ export class LayoutManager {
                     for (const node of eclass.nodes) {
                         classChildren.push({
                             id: `node-${node.id}`,
-                            width: 50,
-                            height: 50
+                            width: ENODE_LAYOUT.width,
+                            height: ENODE_LAYOUT.height
                         });
                     }
 
@@ -157,9 +194,8 @@ export class LayoutManager {
                         id: `class-${eclass.id}`,
                         children: classChildren,
                         layoutOptions: {
-                            'elk.algorithm': 'layered',
-                            'elk.direction': 'DOWN',
-                            'elk.padding': '[top=8,left=8,bottom=8,right=8]',
+                            ...toELKOptions(this.config),
+                            'elk.padding': toPaddingString(CONTAINER_PADDING.eclassGroup),
                             'elk.spacing.nodeNode': '8'
                         }
                     });
@@ -169,9 +205,8 @@ export class LayoutManager {
                     id: `set-${canonicalId}`,
                     children: setChildren,
                     layoutOptions: {
-                        'elk.algorithm': 'layered',
-                        'elk.direction': 'DOWN',
-                        'elk.padding': '[top=8,left=20,bottom=8,right=8]',
+                        ...toELKOptions(this.config),
+                        'elk.padding': toPaddingString(CONTAINER_PADDING.unionFindGroup),
                         'elk.spacing.nodeNode': '10'
                     }
                 });
@@ -184,8 +219,8 @@ export class LayoutManager {
                 for (const node of eclass.nodes) {
                     classChildren.push({
                         id: `node-${node.id}`,
-                        width: 50,
-                        height: 50
+                        width: ENODE_LAYOUT.width,
+                        height: ENODE_LAYOUT.height
                     });
                 }
 
@@ -193,9 +228,8 @@ export class LayoutManager {
                     id: `class-${eclass.id}`,
                     children: classChildren,
                     layoutOptions: {
-                        'elk.algorithm': 'layered',
-                        'elk.direction': 'DOWN',
-                        'elk.padding': '[top=8,left=8,bottom=8,right=8]',
+                        ...toELKOptions(this.config),
+                        'elk.padding': toPaddingString(CONTAINER_PADDING.eclassGroup),
                         'elk.spacing.nodeNode': '8'
                     }
                 });
@@ -224,13 +258,7 @@ export class LayoutManager {
 
         return {
             id: 'root',
-            layoutOptions: {
-                'elk.algorithm': 'layered',
-                'elk.direction': 'DOWN',
-                'elk.spacing.nodeNode': '40',
-                'elk.layered.spacing.nodeNodeBetweenLayers': '40',
-                'elk.hierarchyHandling': 'INCLUDE_CHILDREN'
-            },
+            layoutOptions: toELKOptions(this.config),
             children: elkNodes,
             edges: elkEdges
         };

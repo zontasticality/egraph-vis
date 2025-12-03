@@ -1,6 +1,7 @@
 import type { EGraphRuntime } from './runtime';
 import type { RewriteRule, Pattern, ENodeId, ENode } from './types';
 import { SeededRandom } from './runtime';
+import { isPatternObject, isVariablePattern, isLiteralPattern } from '../utils/typeGuards';
 
 export interface Match {
     rule: RewriteRule;
@@ -129,7 +130,7 @@ export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Ma
 
 function matchPattern(runtime: EGraphRuntime, pattern: Pattern | number, eclassId: ENodeId): Map<string, ENodeId>[] {
     // 1. Concrete ID Match
-    if (typeof pattern === 'number') {
+    if (isLiteralPattern(pattern)) {
         // If pattern is a number, it must match the eclassId?
         // Or does it match if the eclass contains that node?
         // Usually in e-graphs, patterns don't contain concrete IDs unless it's a specific reference.
@@ -142,7 +143,7 @@ function matchPattern(runtime: EGraphRuntime, pattern: Pattern | number, eclassI
     }
 
     // 2. Variable Match
-    if (typeof pattern === 'string' && pattern.startsWith('?')) {
+    if (isVariablePattern(pattern)) {
         return [new Map([[pattern, eclassId]])];
     }
 
@@ -162,17 +163,23 @@ function matchPattern(runtime: EGraphRuntime, pattern: Pattern | number, eclassI
 }
 
 function matchNode(runtime: EGraphRuntime, pattern: Pattern, node: ENode): Map<string, ENodeId>[] {
+    if (isVariablePattern(pattern)) {
+        // This shouldn't happen in matchNode context, but handle gracefully
+        return [];
+    }
+
     if (typeof pattern === 'string') {
         // Constant string "foo" -> matches node with op "foo", args []
         if (node.op === pattern && node.args.length === 0) {
             return [new Map()];
         }
         return [];
-    } else if (typeof pattern === 'number') {
+    } else if (isLiteralPattern(pattern)) {
         return [];
     }
 
     // Object pattern { op, args }
+    if (!isPatternObject(pattern)) return [];
     if (node.op !== pattern.op) return [];
     if (node.args.length !== pattern.args.length) return [];
 
@@ -368,16 +375,20 @@ function instantiatePattern(
     pattern: Pattern | number,
     subst: Map<string, ENodeId>
 ): ENodeId {
-    if (typeof pattern === 'string') {
-        if (pattern.startsWith('?')) {
-            const id = subst.get(pattern);
-            if (id === undefined) throw new Error(`Variable ${pattern} not found in substitution`);
-            return id;
-        } else {
-            return runtime.addEnode({ op: pattern, args: [] });
-        }
-    } else if (typeof pattern === 'number') {
+    if (isVariablePattern(pattern)) {
+        const id = subst.get(pattern);
+        if (id === undefined) throw new Error(`Variable ${pattern} not found in substitution`);
+        return id;
+    } else if (typeof pattern === 'string') {
+        // Constant string pattern
+        return runtime.addEnode({ op: pattern, args: [] });
+    } else if (isLiteralPattern(pattern)) {
         return pattern;
+    }
+
+    // Pattern object { op, args }
+    if (!isPatternObject(pattern)) {
+        throw new Error(`Invalid pattern type: ${typeof pattern}`);
     }
 
     const args: ENodeId[] = [];

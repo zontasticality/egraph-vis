@@ -118,6 +118,22 @@
 
 		const state = currentState;
 
+		// Diagnostic logging
+		console.log("[GraphPane] updateLayout:", {
+			phase: state.phase,
+			stepIndex: state.stepIndex,
+			numEClasses: state.eclasses.length,
+			totalNodes: state.eclasses.reduce(
+				(sum, ec) => sum + ec.nodes.length,
+				0,
+			),
+			numMatches: state.metadata.matches.length,
+			matchedNodes: state.metadata.matches.flatMap((m) => m.nodes).length,
+			numDiffs: state.metadata.diffs.length,
+			progress: progress.toFixed(3),
+			implementation: state.implementation,
+		});
+
 		// Check if we have precomputed layout
 		if (!state.layout) {
 			console.warn(

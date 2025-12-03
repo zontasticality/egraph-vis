@@ -1,10 +1,16 @@
 import { writable, derived, get } from 'svelte/store';
 import type { EGraphTimeline, EGraphState, PresetConfig, EngineOptions } from '../engine/types';
 import { TimelineEngine } from '../engine/timeline';
+import { layoutManager } from '../engine/layout';
 
 // --- Stores ---
 
 export const timeline = writable<EGraphTimeline | null>(null);
+
+// Subscribe to layout updates to force store refresh
+layoutManager.subscribe(() => {
+    timeline.update(t => t ? { ...t } : null);
+});
 export const isPlaying = writable<boolean>(false);
 export const playbackSpeed = writable<number>(1000); // ms per step
 export const transitionMode = writable<'smooth' | 'instant'>('smooth');
