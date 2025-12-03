@@ -87,13 +87,16 @@ Svelte readable store with shape:
 interface TimelineStoreState {
   status: 'loading' | 'ready' | 'error';
   timeline?: Timeline;
-  index: number;                 // current frame
+  position: number;              // float-based timeline position (see ANIMATION.md)
+  index: number;                 // derived integer index (backward compatible)
   current?: EGraphState;
   transitionMode: 'smooth' | 'instant'; // controls animation behavior
   error?: string;
 }
 ```
 Updates happen by replacing the entire object (immutability). Components subscribe via `const { current } = $timelineStore;` and propagate down.
+
+**Animation Enhancement**: The timeline position is now a float (e.g., `4.5` means halfway between snapshots 4 and 5), enabling smooth interpolation during scrubbing. See `ANIMATION.md` for the complete animation system specification.
 
 ### `controllerStore`
 Holds playback UI state (playing, fps, highlight preferences). Derived store merges with `timelineStore` to expose button disabled flags.
@@ -106,6 +109,72 @@ Because snapshots are persistent, panes can animate transitions by diffing `stat
 ### 6.1 Data Structures
 - **Chunked Node Registry**: `EGraphState` uses `nodeChunks: ENode[][]` (array of arrays) instead of a flat array for the node registry. This allows `mutative` to perform efficient structural sharing when appending new nodes, as only the last chunk needs to be cloned/updated.
 - **Metadata**: `StepMetadata` includes `matches` (for Read phase highlighting) and `diffs` (for Write phase highlighting).
+
+## 6.2 Animation System (Enhanced Diffing)
+
+The animation system extends snapshot diffing to enable smooth interpolation between snapshots during timeline scrubbing. This is a progressive enhancement that works alongside the existing discrete step-based navigation.
+
+### Overview
+See the detailed animation specifications:
+- **`ANIMATION.md`**: Overall animation architecture, timeline position model, and precomputation strategy
+- **`VISUAL_STATES.md`**: Node/e-class visual classification system (enums instead of inline logic)
+- **`LAYOUT.md`**: Progressive graph layout computation and caching
+- **`INTERPOLATION.md`**: Style and position blending with efficient caching
+
+### Architecture Integration
+
+**After Timeline Generation**:
+```
+1. TimelineEngine generates all EGraphState snapshots
+2. Compute visual states for each snapshot (classify nodes/e-classes into enums)
+3. Compute first layout synchronously (required for initial render)
+4. Queue remaining layouts for progressive background computation
+5. Timeline store becomes available with first snapshot ready
+6. Background layouts populate snapshot.layout progressively
+```
+
+**During Scrubbing**:
+```
+1. User drags slider to position 4.5 (float)
+2. Derive: currentIndex=4, nextIndex=5, progress=0.5
+3. Components interpolate:
+   - Positions: lerp between snapshot[4].layout and snapshot[5].layout
+   - Colors: blend between snapshot[4].visualStates and snapshot[5].visualStates
+   - Opacity: fade in/out for appearing/disappearing nodes
+4. Render blended state at 60fps
+```
+
+### Data Extensions to EGraphState
+
+Each snapshot is extended with precomputed rendering data:
+
+```ts
+interface EGraphState {
+  // ... existing fields ...
+
+  // Visual classification (lightweight enums)
+  visualStates: {
+    nodes: Map<NodeId, NodeVisualState>,      // ~1 byte per node
+    eclasses: Map<EClassId, EClassVisualState> // ~1 byte per e-class
+  };
+
+  // Precomputed layout positions (optional, populated progressively)
+  layout?: LayoutData;  // ~8 bytes per node (x, y floats)
+}
+```
+
+**Memory Impact**: For 10,000 nodes × 100 snapshots:
+- Visual states: ~17 MB
+- Layout data: ~8 MB
+- Total overhead: ~25 MB (acceptable)
+
+### Backward Compatibility
+
+The animation system is fully backward compatible:
+- `currentIndex` remains available as a derived store from `timelinePosition`
+- Components not updated for animation continue to work with integer indices
+- Layout computation is optional; missing layouts fall back to last-known positions
+- Visual states have default fallbacks if not computed
 
 ## 7. Lazy vs Precomputed Modes
 - **Precomputed (default)**: `TimelineEngine` runs immediately after preset selection, populates `states`, then emits `status=ready`. Controller interaction never re-runs the engine; extremely fast scrubbing.
@@ -140,7 +209,16 @@ interface InteractionState {
 - If presets are large, show progress after each emitted state (percentage = `states.length / expectedStates`).
 
 ## 10. File Placement
-- Engine lives in `src/lib/engine/`.
-- Timeline + controller stores in `src/lib/stores/`.
-- Preset definitions reside in `static/presets/*.json` (see `specs/egraph/PRESETS.md`).
-- Shared TypeScript interfaces go in `src/lib/types.ts` and are imported across specs to prevent drift.
+- **Engine**: `src/lib/engine/`
+  - `timeline.ts`: Timeline engine, snapshot generation
+  - `visual.ts`: Visual state classification logic
+  - `layout.ts`: Layout manager for progressive ELK computation
+  - `interpolation.ts`: Style and position interpolation utilities
+  - `visualStyles.ts`: Shared style definitions (colors, borders, etc.)
+- **Stores**: `src/lib/stores/`
+  - `timelineStore.ts`: Timeline state, position, and scrubbing interface
+  - `interactionStore.ts`: Selection and hover state
+- **Presets**: `static/presets/*.json` (see `specs/egraph/PRESETS.md`)
+- **Types**: `src/lib/types.ts` and `src/lib/engine/types.ts`
+  - Shared interfaces imported across specs to prevent drift
+  - Animation-specific types (visual state enums, layout data) in `types.ts`
