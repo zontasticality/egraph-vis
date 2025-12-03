@@ -100,6 +100,39 @@
                 </label>
             </div>
 
+            <div class="section">
+                <label>
+                    Edge Routing
+                    <select
+                        bind:value={config.edgeRouting}
+                        on:change={dispatchChange}
+                    >
+                        <option value="ORTHOGONAL"
+                            >Orthogonal (Right Angles)</option
+                        >
+                        <option value="POLYLINE">Polyline (Straight)</option>
+                        <option value="SPLINES">Splines (Curved)</option>
+                    </select>
+                </label>
+            </div>
+
+            <div class="section">
+                <label>
+                    Port Constraints
+                    <select
+                        bind:value={config.portConstraints}
+                        on:change={dispatchChange}
+                    >
+                        <option value="FIXED_ORDER"
+                            >Fixed Order (Default)</option
+                        >
+                        <option value="FIXED_SIDE">Fixed Side</option>
+                        <option value="FREE">Free (Any Side)</option>
+                        <option value="FIXED_RATIO">Fixed Ratio</option>
+                    </select>
+                </label>
+            </div>
+
             {#if config.algorithm === "layered" || config.algorithm === "mrtree"}
                 <div class="section">
                     <label>

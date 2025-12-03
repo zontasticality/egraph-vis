@@ -31,6 +31,12 @@ export interface LayoutConfig {
     /** How to handle hierarchical structures */
     hierarchyHandling: 'INHERIT' | 'INCLUDE_CHILDREN' | 'SEPARATE_CHILDREN';
 
+    /** Edge routing style */
+    edgeRouting: 'ORTHOGONAL' | 'POLYLINE' | 'SPLINES';
+
+    /** Port constraints */
+    portConstraints: 'UNDEFINED' | 'FREE' | 'FIXED_SIDE' | 'FIXED_ORDER' | 'FIXED_RATIO';
+
     /** Algorithm specific configurations */
     force?: {
         iterations: number;
@@ -58,6 +64,8 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
         left: 8,
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
+    edgeRouting: 'ORTHOGONAL',
+    portConstraints: 'FIXED_ORDER',
 };
 
 /**
@@ -75,6 +83,8 @@ export const COMPACT_LAYOUT_CONFIG: LayoutConfig = {
         left: 4,
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
+    edgeRouting: 'ORTHOGONAL',
+    portConstraints: 'FIXED_ORDER',
 };
 
 /**
@@ -92,6 +102,8 @@ export const WIDE_LAYOUT_CONFIG: LayoutConfig = {
         left: 12,
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
+    edgeRouting: 'ORTHOGONAL',
+    portConstraints: 'FIXED_ORDER',
 };
 
 /**
@@ -109,6 +121,8 @@ export const FORCE_LAYOUT_CONFIG: LayoutConfig = {
         left: 8,
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
+    edgeRouting: 'POLYLINE',
+    portConstraints: 'FREE',
     force: {
         iterations: 100,
         repulsion: 1.0
@@ -130,6 +144,8 @@ export const MRTREE_LAYOUT_CONFIG: LayoutConfig = {
         left: 8,
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
+    edgeRouting: 'ORTHOGONAL',
+    portConstraints: 'FIXED_ORDER',
 };
 
 /**
@@ -167,6 +183,8 @@ export function toELKOptions(config: LayoutConfig): Record<string, string> {
         'elk.direction': config.direction,
         'elk.padding': `[top=${config.containerPadding.top},left=${config.containerPadding.left},bottom=${config.containerPadding.bottom},right=${config.containerPadding.right}]`,
         'elk.hierarchyHandling': config.hierarchyHandling,
+        'elk.edgeRouting': config.edgeRouting,
+        'elk.portConstraints': config.portConstraints,
     };
 
     // Algorithm specific mapping
