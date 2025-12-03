@@ -45,3 +45,43 @@ export function getLightColorForId(id: number | string): string {
     const index = Math.abs(hash) % colors.length;
     return colors[index];
 }
+
+/**
+ * Interpolate between two colors using CSS color-mix (GPU-accelerated).
+ * 
+ * @param color1 Starting color (CSS color string)
+ * @param color2 Ending color (CSS color string)
+ * @param progress Interpolation progress from 0 to 1
+ * @returns CSS color-mix expression
+ */
+export function interpolateColor(
+    color1: string,
+    color2: string,
+    progress: number,
+): string {
+    if (progress <= 0.01) return color1;
+    if (progress >= 0.99) return color2;
+
+    // Convert progress to percentage
+    const p1 = Math.round((1 - progress) * 100);
+    const p2 = Math.round(progress * 100);
+
+    // Use CSS color-mix for GPU-accelerated blending
+    return `color-mix(in srgb, ${color1} ${p1}%, ${color2} ${p2}%)`;
+}
+
+/**
+ * Linearly interpolate between two opacity values.
+ * 
+ * @param opacity1 Starting opacity (0-1)
+ * @param opacity2 Ending opacity (0-1)
+ * @param progress Interpolation progress from 0 to 1
+ * @returns Interpolated opacity value
+ */
+export function interpolateOpacity(
+    opacity1: number,
+    opacity2: number,
+    progress: number,
+): number {
+    return opacity1 + (opacity2 - opacity1) * progress;
+}

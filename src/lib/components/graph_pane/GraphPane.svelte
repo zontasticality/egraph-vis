@@ -19,6 +19,12 @@
 	import type { EGraphState } from "../../engine/types";
 	import { getColorForId, getLightColorForId } from "../../utils/colors";
 	import { NODE_STYLES, ECLASS_STYLES } from "../../engine/visualStyles";
+	import { easeInExpo } from "../../utils/easing";
+	import {
+		getPosition,
+		getDimensions,
+		getEClassVisuals,
+	} from "./layoutHelpers";
 
 	import FlowENode from "./FlowENode.svelte";
 	import FlowUnionFindGroup from "./FlowUnionFindGroup.svelte";
@@ -99,18 +105,6 @@
 
 	// --- Layout Logic ---
 
-	// Exponential ease-in: stays close to 0 until late in the transition
-	// This makes transitions feel more responsive - they "stick" to current state longer
-	function easeInExpo(t: number): number {
-		if (t <= 0) return 0;
-		if (t >= 1) return 1;
-		// Exponential: 2^(10(t-1))
-		// At t=0.5, this gives ~0.03 (still very close to start)
-		// At t=0.8, this gives ~0.25
-		// At t=0.95, this gives ~0.76
-		return Math.pow(2, 10 * (t - 1));
-	}
-
 	function updateLayout(
 		currentState: EGraphState | null,
 		nextState: EGraphState | null = null,
@@ -147,155 +141,6 @@
 			: progress;
 		const linearProgress = progress; // Linear for opacity (no easing)
 
-		// Helper to get interpolated position
-		// Positions are RELATIVE to parent, so we can interpolate everything safely
-		// extent:"parent" only prevents dragging outside, not programmatic positioning
-		const getPosition = (
-			id: string,
-			isEnode: boolean,
-		): { x: number; y: number } => {
-			if (isEnode) {
-				const nodeId = parseInt(id.substring(5)); // "node-123" -> 123
-				const currentPos = state.layout!.nodes.get(nodeId);
-				if (!currentPos) return { x: 0, y: 0 };
-
-				if (shouldInterpolate) {
-					const nextPos = nextState.layout!.nodes.get(nodeId);
-					if (nextPos) {
-						return {
-							x:
-								currentPos.x +
-								(nextPos.x - currentPos.x) * easedProgress,
-							y:
-								currentPos.y +
-								(nextPos.y - currentPos.y) * easedProgress,
-						};
-					}
-				}
-				return currentPos;
-			} else {
-				// Group node (class or set)
-				const currentPos = state.layout!.groups.get(id);
-				if (!currentPos) return { x: 0, y: 0 };
-
-				if (shouldInterpolate) {
-					const nextPos = nextState.layout!.groups.get(id);
-					if (nextPos) {
-						return {
-							x:
-								currentPos.x +
-								(nextPos.x - currentPos.x) * easedProgress,
-							y:
-								currentPos.y +
-								(nextPos.y - currentPos.y) * easedProgress,
-						};
-					}
-				}
-				return currentPos;
-			}
-		};
-
-		// Helper to get interpolated dimensions
-		// Smoothly transitions width/height when e-classes grow or shrink
-		const getDimensions = (
-			id: string,
-		): { width: number; height: number } => {
-			const currentLayout = state.layout!.groups.get(id);
-			if (!currentLayout) return { width: 100, height: 100 };
-
-			if (shouldInterpolate) {
-				const nextLayout = nextState.layout!.groups.get(id);
-				if (nextLayout) {
-					return {
-						width:
-							currentLayout.width +
-							(nextLayout.width - currentLayout.width) *
-								easedProgress,
-						height:
-							currentLayout.height +
-							(nextLayout.height - currentLayout.height) *
-								easedProgress,
-					};
-				}
-			}
-			return { width: currentLayout.width, height: currentLayout.height };
-		};
-
-		// Helper to interpolate colors using CSS color-mix
-		const interpolateColor = (
-			color1: string,
-			color2: string,
-			progress: number,
-		): string => {
-			if (progress <= 0.01) return color1;
-			if (progress >= 0.99) return color2;
-
-			// Convert progress to percentage
-			const p1 = Math.round((1 - progress) * 100);
-			const p2 = Math.round(progress * 100);
-
-			// Use CSS color-mix for GPU-accelerated blending
-			return `color-mix(in srgb, ${color1} ${p1}%, ${color2} ${p2}%)`;
-		};
-
-		// Helper to get interpolated e-class visual properties
-		const getEClassVisuals = (
-			eclassId: number,
-		): { color: string; lightColor: string; opacity: number } => {
-			const currentVisualState =
-				state.visualStates?.eclasses.get(eclassId);
-			const nextVisualState =
-				nextState?.visualStates?.eclasses.get(eclassId);
-
-			// Get base style from current visual state (fallback to Default)
-			const baseStyle = currentVisualState
-				? ECLASS_STYLES[currentVisualState.styleClass]
-				: ECLASS_STYLES[0]; // Default style
-
-			// Get next style if available
-			const nextStyle = nextVisualState
-				? ECLASS_STYLES[nextVisualState.styleClass]
-				: null;
-
-			// Determine if we can interpolate colors (need both states with different styles)
-			const canInterpolate =
-				shouldInterpolate &&
-				currentVisualState &&
-				nextVisualState &&
-				nextStyle &&
-				currentVisualState.styleClass !== nextVisualState.styleClass;
-
-			const borderColor = canInterpolate
-				? interpolateColor(
-						baseStyle.borderColor!,
-						nextStyle!.borderColor!,
-						easedProgress,
-					)
-				: baseStyle.borderColor!;
-
-			const backgroundColor = canInterpolate
-				? interpolateColor(
-						baseStyle.backgroundColor!,
-						nextStyle!.backgroundColor!,
-						easedProgress,
-					)
-				: baseStyle.backgroundColor!;
-
-			const opacity =
-				canInterpolate &&
-				baseStyle.opacity !== undefined &&
-				nextStyle!.opacity !== undefined
-					? baseStyle.opacity +
-						(nextStyle!.opacity - baseStyle.opacity) * easedProgress
-					: (baseStyle.opacity ?? 1.0);
-
-			return {
-				color: borderColor,
-				lightColor: backgroundColor,
-				opacity,
-			};
-		};
-
 		// Build Flow nodes from state structure
 
 		// In deferred mode, group E-Classes by their canonical Union-Find set
@@ -315,8 +160,21 @@
 			// Create Flow nodes for each set
 			for (const [canonicalId, eclassesInSet] of sets) {
 				const setId = `set-${canonicalId}`;
-				const setPos = getPosition(setId, false); // Top-level, no parent
-				const setDims = getDimensions(setId);
+				const setPos = getPosition(
+					setId,
+					false,
+					state,
+					nextState,
+					progress,
+					shouldInterpolate,
+				);
+				const setDims = getDimensions(
+					setId,
+					state,
+					nextState,
+					progress,
+					shouldInterpolate,
+				);
 
 				// Create union-find group node
 				newNodes.push({
@@ -334,9 +192,28 @@
 
 				for (const eclass of eclassesInSet) {
 					const classId = `class-${eclass.id}`;
-					const classPos = getPosition(classId, false); // Has parent (set)
-					const classDims = getDimensions(classId);
-					const classVisuals = getEClassVisuals(eclass.id);
+					const classPos = getPosition(
+						classId,
+						false,
+						state,
+						nextState,
+						progress,
+						shouldInterpolate,
+					);
+					const classDims = getDimensions(
+						classId,
+						state,
+						nextState,
+						progress,
+						shouldInterpolate,
+					);
+					const classVisuals = getEClassVisuals(
+						eclass.id,
+						state,
+						nextState,
+						progress,
+						shouldInterpolate,
+					);
 					const isCanonical = eclass.id === canonicalId;
 
 					// Create e-class group node
@@ -366,7 +243,14 @@
 
 					for (const enode of eclass.nodes) {
 						const nodeId = `node-${enode.id}`;
-						const nodePos = getPosition(nodeId, true); // Has parent (e-class)
+						const nodePos = getPosition(
+							nodeId,
+							true,
+							state,
+							nextState,
+							progress,
+							shouldInterpolate,
+						);
 						const visualState = state.visualStates?.nodes.get(
 							enode.id,
 						);
@@ -397,84 +281,32 @@
 					}
 				}
 			}
-
-			/* // If interpolating, also add new nodes from nextState that don't exist in currentState (fade-in)
-			if (shouldInterpolate && nextState) {
-				// Build set of existing node IDs
-				const existingNodeIds = new Set<number>();
-				for (const eclass of state.eclasses) {
-					for (const node of eclass.nodes) {
-						existingNodeIds.add(node.id);
-					}
-				}
-
-				// Find new nodes in nextState
-				const nextSets = new Map<number, typeof nextState.eclasses>();
-				for (const eclass of nextState.eclasses) {
-					const canonicalId =
-						nextState.unionFind[eclass.id]?.canonical ?? eclass.id;
-					if (!nextSets.has(canonicalId)) {
-						nextSets.set(canonicalId, []);
-					}
-					nextSets.get(canonicalId)!.push(eclass);
-				}
-
-				for (const [canonicalId, eclassesInSet] of nextSets) {
-					for (const eclass of eclassesInSet) {
-						for (const enode of eclass.nodes) {
-							if (!existingNodeIds.has(enode.id)) {
-								// This node is new - create it with fade-in
-								const nodeId = `node-${enode.id}`;
-								const nodePos = getPosition(nodeId, true); // Has parent (e-class)
-								const nextVisualState =
-									nextState.visualStates?.nodes.get(enode.id);
-								const enodeIdentityColor = getColorForId(
-									eclass.id,
-								);
-
-								// Check if parent e-class and set exist in current rendering
-								const classId = `class-${eclass.id}`;
-								const setId = `set-${canonicalId}`;
-
-								// Only add if parent exists (to avoid orphaned nodes)
-								const parentExists = newNodes.some(
-									(n) => n.id === classId,
-								);
-								if (parentExists) {
-									newNodes.push({
-										id: nodeId,
-										type: "enode",
-										position: nodePos,
-										parentId: classId,
-										extent: "parent",
-										data: {
-											id: enode.id,
-											eclassId: eclass.id,
-											color: enodeIdentityColor,
-											enodeColor: getColorForId(enode.id),
-											args: enode.args,
-											label: enode.op,
-											visualState: undefined, // No current state
-											nextVisualState: nextVisualState,
-											progress: easedProgress, // Eased for color interpolation
-											linearProgress: linearProgress, // Linear for opacity
-										},
-										style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
-										draggable: false,
-									});
-								}
-							}
-						}
-					}
-				}
-			} */
 		} else {
 			// Naive mode: just e-classes and e-nodes
 			for (const eclass of state.eclasses) {
 				const classId = `class-${eclass.id}`;
-				const classPos = getPosition(classId, false); // Top-level, no parent
-				const classDims = getDimensions(classId);
-				const classVisuals = getEClassVisuals(eclass.id);
+				const classPos = getPosition(
+					classId,
+					false,
+					state,
+					nextState,
+					progress,
+					shouldInterpolate,
+				);
+				const classDims = getDimensions(
+					classId,
+					state,
+					nextState,
+					progress,
+					shouldInterpolate,
+				);
+				const classVisuals = getEClassVisuals(
+					eclass.id,
+					state,
+					nextState,
+					progress,
+					shouldInterpolate,
+				);
 
 				// Create e-class group node
 				newNodes.push({
@@ -500,7 +332,14 @@
 
 				for (const enode of eclass.nodes) {
 					const nodeId = `node-${enode.id}`;
-					const nodePos = getPosition(nodeId, true); // Has parent (e-class)
+					const nodePos = getPosition(
+						nodeId,
+						true,
+						state,
+						nextState,
+						progress,
+						shouldInterpolate,
+					);
 					const visualState = state.visualStates?.nodes.get(enode.id);
 					const nextVisualState = nextState?.visualStates?.nodes.get(
 						enode.id,
@@ -529,58 +368,6 @@
 					});
 				}
 			}
-
-			/* // If interpolating, also add new nodes from nextState that don't exist in currentState (fade-in)
-			if (shouldInterpolate && nextState) {
-				// Build set of existing node IDs
-				const existingNodeIds = new Set<number>();
-				for (const eclass of state.eclasses) {
-					for (const node of eclass.nodes) {
-						existingNodeIds.add(node.id);
-					}
-				}
-
-				// Find new nodes in nextState
-				for (const eclass of nextState.eclasses) {
-					for (const enode of eclass.nodes) {
-						if (!existingNodeIds.has(enode.id)) {
-							// This node is new - create it with fade-in
-							const nodeId = `node-${enode.id}`;
-							const nodePos = getPosition(nodeId, true); // Has parent (e-class)
-							const nextVisualState = nextState.visualStates?.nodes.get(enode.id);
-							const enodeIdentityColor = getColorForId(eclass.id);
-
-							// Check if parent e-class exists in current rendering
-							const classId = `class-${eclass.id}`;
-							const parentExists = newNodes.some(n => n.id === classId);
-
-							if (parentExists) {
-								newNodes.push({
-									id: nodeId,
-									type: "enode",
-									position: nodePos,
-									parentId: classId,
-									extent: "parent",
-									data: {
-										id: enode.id,
-										eclassId: eclass.id,
-										color: enodeIdentityColor,
-										enodeColor: getColorForId(enode.id),
-										args: enode.args,
-										label: enode.op,
-										visualState: undefined, // No current state
-										nextVisualState: nextVisualState,
-										progress: easedProgress, // Eased for color interpolation
-										linearProgress: linearProgress // Linear for opacity
-									},
-									style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
-									draggable: false
-								});
-							}
-						}
-					}
-				}
-			} */
 		}
 
 		// Create edges
