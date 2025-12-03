@@ -115,7 +115,7 @@ export class LayoutManager {
         const layouted = await this.elk.layout(elkGraph);
 
         // Extract positions from layouted graph
-        return this.elkGraphToLayoutData(layouted);
+        return this.elkGraphToLayoutData(layouted, state);
     }
 
     /**
@@ -238,27 +238,33 @@ export class LayoutManager {
 
     /**
      * Extract layout data from ELK's output
-     * Recursively traverse to get all node positions (including groups)
+     * Stores positions as ELK provides them (relative to parent)
+     * SvelteFlow nodes with parentId need relative positions
+     *
+     * Also adds alias entries for union-find equivalent IDs to enable seamless interpolation
+     * when e-classes are merged (their canonical IDs change).
      */
-    private elkGraphToLayoutData(elkGraph: any): LayoutData {
+    private elkGraphToLayoutData(elkGraph: any, state: EGraphState): LayoutData {
         const nodes = new Map<number, { x: number; y: number }>();
         const groups = new Map<string, { x: number; y: number; width: number; height: number }>();
         const edges = new Set<string>();
 
-        // Recursively extract all node/group positions
-        const traverse = (node: any, parentX = 0, parentY = 0) => {
-            const absoluteX = (node.x ?? 0) + parentX;
-            const absoluteY = (node.y ?? 0) + parentY;
+        // Recursively extract positions (keeping them relative as ELK provides)
+        const traverse = (node: any) => {
+            // Store position as-is (relative to parent, or absolute if no parent)
+            const x = node.x ?? 0;
+            const y = node.y ?? 0;
 
             if (node.id.startsWith('node-')) {
-                // E-node position
+                // E-node position (relative to parent e-class)
                 const nodeId = parseInt(node.id.substring(5));
-                nodes.set(nodeId, { x: absoluteX, y: absoluteY });
+                nodes.set(nodeId, { x, y });
             } else if (node.id.startsWith('class-') || node.id.startsWith('set-')) {
                 // E-class or union-find group position
+                // (relative to parent for e-class, absolute for set)
                 groups.set(node.id, {
-                    x: absoluteX,
-                    y: absoluteY,
+                    x,
+                    y,
                     width: node.width ?? 0,
                     height: node.height ?? 0
                 });
@@ -267,7 +273,7 @@ export class LayoutManager {
             // Recurse into children
             if (node.children) {
                 for (const child of node.children) {
-                    traverse(child, absoluteX, absoluteY);
+                    traverse(child);
                 }
             }
         };
@@ -283,6 +289,38 @@ export class LayoutManager {
         if (elkGraph.edges) {
             for (const edge of elkGraph.edges) {
                 edges.add(edge.id);
+            }
+        }
+
+        // Add alias entries for union-find equivalent IDs
+        // This enables smooth interpolation when e-classes merge and canonical IDs change
+        if (state.implementation === 'deferred') {
+            // Build map of canonical → all equivalent IDs
+            const unionFindSets = new Map<number, number[]>();
+            for (const entry of state.unionFind) {
+                if (!unionFindSets.has(entry.canonical)) {
+                    unionFindSets.set(entry.canonical, []);
+                }
+                unionFindSets.get(entry.canonical)!.push(entry.id);
+            }
+
+            // For each union-find set, store its position under all equivalent set IDs
+            for (const [canonical, equivalentIds] of unionFindSets) {
+                const canonicalSetId = `set-${canonical}`;
+                const canonicalPos = groups.get(canonicalSetId);
+
+                if (canonicalPos) {
+                    // Add alias entries for all non-canonical IDs in this set
+                    for (const id of equivalentIds) {
+                        if (id !== canonical) {
+                            const aliasSetId = `set-${id}`;
+                            // Only add if not already present (shouldn't happen, but safe)
+                            if (!groups.has(aliasSetId)) {
+                                groups.set(aliasSetId, { ...canonicalPos });
+                            }
+                        }
+                    }
+                }
             }
         }
 

@@ -10,6 +10,7 @@
         label?: string;
         color?: string;
         lightColor?: string;
+        opacity?: number;
         width?: number;
         height?: number;
         eclassId: number;
@@ -64,6 +65,7 @@
     style:--bg-color={backgroundColor}
     style:--border-width={borderWidth}
     style:--border-style={borderStyle}
+    style:--opacity={data.opacity ?? 1.0}
     on:click={handleClick}
 >
     <!-- Target Handle for incoming edges from arguments -->
@@ -90,6 +92,7 @@
         box-sizing: border-box;
         overflow: visible;
         cursor: pointer;
+        opacity: var(--opacity, 1.0);
         transition: all 0.15s ease-out;
     }
 

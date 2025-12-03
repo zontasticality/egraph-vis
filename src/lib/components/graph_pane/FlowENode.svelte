@@ -15,7 +15,8 @@
         args: number[]; // Argument IDs
         visualState?: NodeVisualState; // Precomputed current visual state
         nextVisualState?: NodeVisualState; // Precomputed next visual state (for interpolation)
-        progress?: number; // Interpolation progress (0-1)
+        progress?: number; // Eased interpolation progress for colors (0-1)
+        linearProgress?: number; // Linear interpolation progress for opacity (0-1)
     };
 
     // Helper function to interpolate colors using CSS color-mix
@@ -40,10 +41,12 @@
     // Selection state
     $: isSelected = $interactionStore.selection?.nodeIds.has(data.id) ?? false;
 
-    // Get base style from visual state (fallback to Default if not provided)
+    // Get base style from visual state (fallback to Default or use next if current doesn't exist)
     $: baseStyle = data.visualState
         ? NODE_STYLES[data.visualState.styleClass]
-        : NODE_STYLES[0]; // Default style
+        : (data.nextVisualState
+            ? NODE_STYLES[data.nextVisualState.styleClass]
+            : NODE_STYLES[0]); // Default style
 
     // Get next style if available
     $: nextStyle = data.nextVisualState
@@ -55,45 +58,59 @@
 
     // Determine if we should interpolate
     $: shouldInterpolate = !isSelected &&
-                           nextStyle &&
                            data.progress !== undefined &&
                            data.progress > 0.01 &&
-                           data.progress < 0.99;
+                           data.progress < 0.99 &&
+                           (data.visualState || data.nextVisualState); // At least one state exists
+
+    // Determine if we can interpolate colors (need both states with different styles)
+    $: canInterpolateColors = shouldInterpolate &&
+                               data.visualState &&
+                               data.nextVisualState &&
+                               nextStyle &&
+                               data.visualState.styleClass !== data.nextVisualState.styleClass;
 
     // Apply selection override (blue) or interpolate/use base style
     $: borderColor = isSelected
         ? "#2563eb"
-        : (shouldInterpolate
+        : (canInterpolateColors
             ? interpolateColor(baseStyle.borderColor, nextStyle!.borderColor, data.progress!)
             : baseStyle.borderColor);
 
     $: backgroundColor = isSelected
         ? "#3b82f6"
-        : (shouldInterpolate
+        : (canInterpolateColors
             ? interpolateColor(baseStyle.backgroundColor, nextStyle!.backgroundColor, data.progress!)
             : baseStyle.backgroundColor);
 
     $: textColor = isSelected
         ? "#ffffff"
-        : (shouldInterpolate
+        : (canInterpolateColors
             ? interpolateColor(baseStyle.textColor, nextStyle!.textColor, data.progress!)
             : baseStyle.textColor);
 
     // Interpolate border style: use "dashed" if either state is dashed
-    $: borderStyle = shouldInterpolate && (baseStyle.borderStyle === "dashed" || nextStyle!.borderStyle === "dashed")
+    $: borderStyle = canInterpolateColors && (baseStyle.borderStyle === "dashed" || nextStyle!.borderStyle === "dashed")
         ? "dashed"
         : baseStyle.borderStyle;
 
     // Handle opacity for appearing/disappearing nodes
     $: nodeOpacity = (() => {
-        // If node doesn't exist in next state, fade out
-        if (shouldInterpolate && !data.nextVisualState) {
-            return 1 - data.progress!; // Fade from 1 to 0
+        if (!shouldInterpolate) return 1;
+
+        // Use linear progress for opacity (not eased) so fade is visible
+        const opacityProgress = data.linearProgress ?? data.progress ?? 0;
+
+        // Node doesn't exist in currentState (visualState is undefined) - fade in
+        if (!data.visualState && data.nextVisualState) {
+            return opacityProgress; // Linear fade from 0 to 1
         }
-        // If node didn't exist in current state (new node), fade in
-        if (shouldInterpolate && !data.visualState) {
-            return data.progress!; // Fade from 0 to 1
+
+        // Node doesn't exist in nextState - fade out
+        if (data.visualState && !data.nextVisualState) {
+            return 1 - opacityProgress; // Linear fade from 1 to 0
         }
+
         return 1; // Fully visible
     })();
 
@@ -202,7 +219,7 @@
         overflow: visible;
         cursor: pointer;
         opacity: var(--opacity, 1);
-        transition: opacity 0.05s ease-out; /* Smooth opacity transitions */
+        /* No transition - opacity is computed per-frame during scrubbing */
     }
 
     .identity-circle {
