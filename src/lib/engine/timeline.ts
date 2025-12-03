@@ -1,6 +1,8 @@
 import { create } from 'mutative';
 import { EGraphRuntime, SeededRandom } from './runtime';
 import { rebuild, collectMatches, applyMatches, applyMatchesGen, rebuildGen } from './algorithms';
+import { computeVisualStates } from './visual';
+import { layoutManager } from './layout';
 import type {
     EGraphEngine,
     EGraphTimeline,
@@ -47,7 +49,7 @@ export class TimelineEngine implements EGraphEngine {
         this.emitSnapshot('init');
     }
 
-    runUntilHalt(): EGraphTimeline {
+    async runUntilHalt(): Promise<EGraphTimeline> {
         let iteration = 0;
         const cap = this.options.iterationCap ?? 100;
 
@@ -107,6 +109,22 @@ export class TimelineEngine implements EGraphEngine {
         }
 
         this.emitSnapshot('done');
+
+        // Compute visual states for all snapshots (Phase 1 of animation system)
+        console.log('[Timeline] Computing visual states for all snapshots...');
+        for (let i = 0; i < this.timeline.states.length; i++) {
+            const state = this.timeline.states[i];
+            const visualStates = computeVisualStates(state);
+            // Update the state with computed visual states
+            this.timeline.states[i] = create(state, draft => {
+                draft.visualStates = visualStates;
+            });
+        }
+
+        // Compute layouts progressively (Phase 2 of animation system)
+        // First layout is synchronous, rest are computed in background
+        await layoutManager.precomputeAll(this.timeline);
+
         return this.timeline;
     }
 
@@ -169,6 +187,10 @@ export class TimelineEngine implements EGraphEngine {
                 matches: [],
                 invariants: { congruenceValid: true, hashconsValid: true },
                 selectionHints: []
+            },
+            visualStates: {
+                nodes: new Map(),
+                eclasses: new Map()
             }
         };
 

@@ -2,6 +2,43 @@ export type ENodeId = number;
 export type EClassId = number; // Synonymous with canonical ENodeId
 export type PresetId = string;
 
+// --- Visual State Enums (for Animation System) ---
+
+export enum NodeStyleClass {
+    Default = 0,
+    MatchedLHS = 1,      // Read phase: part of pattern match
+    NewNode = 2,         // Write phase: newly created
+    NonCanonical = 3,    // Compact phase: ghost node (dashed border)
+    ParentNode = 4,      // Repair phase: parent being repaired
+}
+
+export enum EClassStyleClass {
+    Default = 0,
+    Active = 1,          // Currently being processed (repair/compact phase)
+    InWorklist = 2,      // In the worklist
+    Merged = 3,          // Non-canonical (merged away in compact)
+}
+
+// --- Visual State Structures ---
+
+export interface NodeVisualState {
+    styleClass: NodeStyleClass;
+    portTargets: number[];  // Canonical IDs for each argument (for port colors)
+}
+
+export interface EClassVisualState {
+    styleClass: EClassStyleClass;
+    isCanonical: boolean;
+}
+
+// --- Layout Data ---
+
+export interface LayoutData {
+    nodes: Map<number, { x: number; y: number }>;
+    groups: Map<string, { x: number; y: number; width: number; height: number }>; // String keys: "class-123", "set-456"
+    edges: Set<string>;
+}
+
 // --- Runtime Structures (Mutable) ---
 
 export interface ENode {
@@ -35,6 +72,11 @@ export interface EGraphState {
     nodeChunks: ENode[][]; // Chunked array of all nodes (index = id)
     worklist: number[];
     metadata: StepMetadata;
+    visualStates: {
+        nodes: Map<number, NodeVisualState>;
+        eclasses: Map<number, EClassVisualState>;
+    };
+    layout?: LayoutData;  // Populated progressively by layout manager
 }
 
 export interface EClassViewModel {
@@ -92,7 +134,7 @@ export interface EngineOptions {
 
 export interface EGraphEngine {
     loadPreset(preset: PresetConfig, options: EngineOptions): void;
-    runUntilHalt(): EGraphTimeline;
+    runUntilHalt(): Promise<EGraphTimeline>;
     step(): EGraphState | null;
     getTimeline(): EGraphTimeline;
 }

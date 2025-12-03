@@ -5,15 +5,35 @@
         nextStep,
         prevStep,
         goToStep,
+        scrubTo,
+        timelinePosition,
         currentIndex,
         timeline,
         progress,
         currentState,
     } from "../stores/timelineStore";
 
-    $: current = $currentIndex;
+    $: current = $currentIndex;  // Display integer value
+    $: position = $timelinePosition;  // Actual float position
     $: total = $timeline ? $timeline.states.length : 0;
     $: max = Math.max(0, total - 1);
+
+    // Handle slider input (continuous scrubbing)
+    function handleSliderInput(event: Event) {
+        const value = parseFloat((event.target as HTMLInputElement).value);
+        scrubTo(value);
+    }
+
+    // Handle slider change (snap to integer when released)
+    function handleSliderChange(event: Event) {
+        const value = parseFloat((event.target as HTMLInputElement).value);
+        const snapped = Math.round(value);
+
+        // Snap to integer if close enough (within 5%)
+        if (Math.abs(value - snapped) < 0.05) {
+            goToStep(snapped, true);
+        }
+    }
 
     // Phase descriptions for tooltips
     const phaseDescriptions: Record<
@@ -153,8 +173,10 @@
             type="range"
             min="0"
             {max}
-            value={current}
-            on:input={(e) => goToStep(parseInt(e.currentTarget.value))}
+            step="0.01"
+            value={position}
+            on:input={handleSliderInput}
+            on:change={handleSliderChange}
             disabled={total === 0}
         />
     </div>

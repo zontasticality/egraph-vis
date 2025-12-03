@@ -3,7 +3,7 @@ import { TimelineEngine } from './timeline';
 import type { PresetConfig } from './types';
 
 describe('TimelineEngine', () => {
-    it('should initialize and run a simple preset', () => {
+    it('should initialize and run a simple preset', async () => {
         const engine = new TimelineEngine();
         const preset: PresetConfig = {
             id: 'simple',
@@ -14,13 +14,13 @@ describe('TimelineEngine', () => {
         };
 
         engine.loadPreset(preset, { iterationCap: 10, implementation: 'naive' });
-        const timeline = engine.runUntilHalt();
+        const timeline = await engine.runUntilHalt();
 
         expect(timeline.states.length).toBeGreaterThan(0);
         expect(timeline.haltedReason).toBe('saturated');
     });
 
-    it('should apply rewrites and merge', () => {
+    it('should apply rewrites and merge', async () => {
         const engine = new TimelineEngine();
         const preset: PresetConfig = {
             id: 'rewrite-test',
@@ -36,7 +36,7 @@ describe('TimelineEngine', () => {
         };
 
         engine.loadPreset(preset, { iterationCap: 10, implementation: 'naive' });
-        const timeline = engine.runUntilHalt();
+        const timeline = await engine.runUntilHalt();
         const finalState = timeline.states[timeline.states.length - 1];
 
         // Expected: (* a 1) merges with a
@@ -57,7 +57,7 @@ describe('TimelineEngine', () => {
         expect(class0!.nodes.some(n => n.op === '*')).toBe(true);
     });
 
-    it('should handle deferred rebuild (congruence)', () => {
+    it('should handle deferred rebuild (congruence)', async () => {
         const engine = new TimelineEngine();
         const preset: PresetConfig = {
             id: 'test-rebuild',
@@ -82,7 +82,7 @@ describe('TimelineEngine', () => {
         };
 
         engine.loadPreset(preset, { iterationCap: 10, implementation: 'naive' });
-        const timeline = engine.runUntilHalt();
+        const timeline = await engine.runUntilHalt();
         const finalState = timeline.states[timeline.states.length - 1];
 
         // 1. a merges with b.
@@ -112,7 +112,7 @@ describe('TimelineEngine', () => {
         expect(classF.nodes.length).toBeGreaterThanOrEqual(1);
     });
 
-    it('should handle associativity', () => {
+    it('should handle associativity', async () => {
         const engine = new TimelineEngine();
         // (a + b) + c -> a + (b + c)
         const preset: PresetConfig = {
@@ -135,7 +135,7 @@ describe('TimelineEngine', () => {
         };
 
         engine.loadPreset(preset, { iterationCap: 10, implementation: 'naive' });
-        const timeline = engine.runUntilHalt();
+        const timeline = await engine.runUntilHalt();
         const finalState = timeline.states[timeline.states.length - 1];
 
         // We expect the root class to contain both ((a+b)+c) and (a+(b+c))
@@ -167,7 +167,7 @@ describe('TimelineEngine', () => {
         expect(classABC_right).toBeDefined();
     });
 
-    it('should handle commutativity', () => {
+    it('should handle commutativity', async () => {
         const engine = new TimelineEngine();
         // a + b -> b + a
         const preset: PresetConfig = {
@@ -184,7 +184,7 @@ describe('TimelineEngine', () => {
         };
 
         engine.loadPreset(preset, { iterationCap: 10, implementation: 'naive' });
-        const timeline = engine.runUntilHalt();
+        const timeline = await engine.runUntilHalt();
         const finalState = timeline.states[timeline.states.length - 1];
 
         // Expect root class to contain both (a+b) and (b+a)
@@ -206,7 +206,7 @@ describe('TimelineEngine', () => {
         expect(hasBA).toBe(true);
     });
 
-    it('should handle arithmetic simplification (shift)', () => {
+    it('should handle arithmetic simplification (shift)', async () => {
         const engine = new TimelineEngine();
         // x * 2 -> x << 1
         const preset: PresetConfig = {
@@ -223,7 +223,7 @@ describe('TimelineEngine', () => {
         };
 
         engine.loadPreset(preset, { iterationCap: 10, implementation: 'naive' });
-        const timeline = engine.runUntilHalt();
+        const timeline = await engine.runUntilHalt();
         const finalState = timeline.states[timeline.states.length - 1];
 
         const rootClass = finalState.eclasses.find(c => c.nodes.some(n => n.op === '*'));
@@ -233,7 +233,7 @@ describe('TimelineEngine', () => {
         expect(rootClass!.nodes.some(n => n.op === '<<')).toBe(true);
     });
 
-    it('should handle complex identity', () => {
+    it('should handle complex identity', async () => {
         const engine = new TimelineEngine();
         // (x * 2) / 2 -> x
         const preset: PresetConfig = {
@@ -256,7 +256,7 @@ describe('TimelineEngine', () => {
         };
 
         engine.loadPreset(preset, { iterationCap: 10, implementation: 'naive' });
-        const timeline = engine.runUntilHalt();
+        const timeline = await engine.runUntilHalt();
         const finalState = timeline.states[timeline.states.length - 1];
 
         // The root class (containing /) should merge with class containing 'x'
@@ -288,15 +288,15 @@ describe('TimelineEngine', () => {
             ]
         };
 
-        it('should reach the same conclusion (a) in both modes', () => {
+        it('should reach the same conclusion (a) in both modes', async () => {
             const engineNaive = new TimelineEngine();
             engineNaive.loadPreset(bitvectorPreset, { iterationCap: 30, implementation: 'naive' });
-            const timelineNaive = engineNaive.runUntilHalt();
+            const timelineNaive = await engineNaive.runUntilHalt();
             const stateNaive = timelineNaive.states[timelineNaive.states.length - 1];
 
             const engineDeferred = new TimelineEngine();
             engineDeferred.loadPreset(bitvectorPreset, { iterationCap: 30, implementation: 'deferred' });
-            const timelineDeferred = engineDeferred.runUntilHalt();
+            const timelineDeferred = await engineDeferred.runUntilHalt();
             const stateDeferred = timelineDeferred.states[timelineDeferred.states.length - 1];
 
             // Helper to check if root is equivalent to 'a'
@@ -319,7 +319,7 @@ describe('TimelineEngine', () => {
             checkRootIsA(stateDeferred, 'deferred');
         });
 
-        it('should demonstrate difference between naive and deferred in cascading merges', () => {
+        it('should demonstrate difference between naive and deferred in cascading merges', async () => {
             // Setup: a, b, c. f(a), f(b), f(c). g(f(a)), g(f(b)), g(f(c)).
             // Rules: a=b, b=c.
             // Expectation:
@@ -347,7 +347,7 @@ describe('TimelineEngine', () => {
             // Run Naive
             const engineNaive = new TimelineEngine();
             engineNaive.loadPreset(cascadePreset, { iterationCap: 5, implementation: 'naive' });
-            const timelineNaive = engineNaive.runUntilHalt();
+            const timelineNaive = await engineNaive.runUntilHalt();
 
             // Find the 'write' snapshot of the first iteration (step 0)
             // Timeline states: init, read, write, rebuild, read...
@@ -358,7 +358,7 @@ describe('TimelineEngine', () => {
             // Run Deferred
             const engineDeferred = new TimelineEngine();
             engineDeferred.loadPreset(cascadePreset, { iterationCap: 5, implementation: 'deferred' });
-            const timelineDeferred = engineDeferred.runUntilHalt();
+            const timelineDeferred = await engineDeferred.runUntilHalt();
 
             const writeStateDeferred = timelineDeferred.states.find(s => s.phase === 'write');
             expect(writeStateDeferred).toBeDefined();
@@ -381,7 +381,7 @@ describe('TimelineEngine', () => {
     });
 
     describe('Structural Integrity & Edge Cases', () => {
-        it('should deduplicate identical nodes (hashconsing)', () => {
+        it('should deduplicate identical nodes (hashconsing)', async () => {
             const engine = new TimelineEngine();
             // Create a list containing two identical f(a) nodes
             const preset: PresetConfig = {
@@ -399,7 +399,7 @@ describe('TimelineEngine', () => {
             };
 
             engine.loadPreset(preset, { iterationCap: 1, implementation: 'naive' });
-            const timeline = engine.runUntilHalt();
+            const timeline = await engine.runUntilHalt();
             const state = timeline.states[timeline.states.length - 1];
 
             // Find the 'list' node
@@ -411,7 +411,7 @@ describe('TimelineEngine', () => {
             expect(listNode.args[0]).toBe(listNode.args[1]);
         });
 
-        it('should handle multi-argument congruence', () => {
+        it('should handle multi-argument congruence', async () => {
             const engine = new TimelineEngine();
             // f(a, b) and f(c, d). Merge a=c, b=d.
             const preset: PresetConfig = {
@@ -432,7 +432,7 @@ describe('TimelineEngine', () => {
             };
 
             engine.loadPreset(preset, { iterationCap: 5, implementation: 'deferred' });
-            const timeline = engine.runUntilHalt();
+            const timeline = await engine.runUntilHalt();
             const state = timeline.states[timeline.states.length - 1];
 
             // Find f(a,b) and f(c,d) classes
@@ -444,7 +444,7 @@ describe('TimelineEngine', () => {
             expect(listNode.args[0]).toBe(listNode.args[1]);
         });
 
-        it('should handle cycles gracefully (a = f(a))', () => {
+        it('should handle cycles gracefully (a = f(a))', async () => {
             const engine = new TimelineEngine();
             const preset: PresetConfig = {
                 id: 'cycle',
@@ -474,7 +474,7 @@ describe('TimelineEngine', () => {
 
             engine.loadPreset(cyclePreset, { iterationCap: 5, implementation: 'naive' });
             // Should not hang
-            const timeline = engine.runUntilHalt();
+            const timeline = await engine.runUntilHalt();
             const state = timeline.states[timeline.states.length - 1];
 
             // 'a' class should contain 'f(a)'

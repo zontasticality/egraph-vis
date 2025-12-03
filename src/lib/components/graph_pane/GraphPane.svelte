@@ -10,11 +10,11 @@
 	} from "@xyflow/svelte";
 	import "@xyflow/svelte/dist/style.css";
 	import { writable, get } from "svelte/store";
-	import { currentState, transitionMode } from "../../stores/timelineStore";
+	import { currentState, transitionMode, scrubData } from "../../stores/timelineStore";
 	import { interactionStore } from "../../stores/interactionStore";
-	import ELK from "elkjs";
 	import type { EGraphState } from "../../engine/types";
 	import { getColorForId, getLightColorForId } from "../../utils/colors";
+	import { NODE_STYLES, ECLASS_STYLES } from "../../engine/visualStyles";
 
 	import FlowENode from "./FlowENode.svelte";
 	import FlowUnionFindGroup from "./FlowUnionFindGroup.svelte";
@@ -31,8 +31,6 @@
 
 	const nodes = writable<Node[]>([]);
 	const edges = writable<Edge[]>([]);
-
-	let elk: any;
 
 	// --- Interaction Handling ---
 
@@ -97,20 +95,73 @@
 
 	// --- Layout Logic ---
 
-	async function updateLayout(state: EGraphState | null) {
-		if (!elk) {
-			elk = new ELK();
-		}
-
-		if (!state) {
+	function updateLayout(
+		currentState: EGraphState | null,
+		nextState: EGraphState | null = null,
+		progress: number = 0
+	) {
+		if (!currentState) {
 			nodes.set([]);
 			edges.set([]);
 			return;
 		}
 
-		// 1. Convert EGraphState to ELK Graph
-		const elkNodes: any[] = [];
-		const elkEdges: any[] = [];
+		const state = currentState;
+
+		// Check if we have precomputed layout
+		if (!state.layout) {
+			console.warn('[GraphPane] No precomputed layout available, waiting...');
+			return;
+		}
+
+		const newNodes: Node[] = [];
+		const newEdges: Edge[] = [];
+
+		// Determine if we should interpolate positions
+		const shouldInterpolate =
+			nextState?.layout &&
+			progress > 0.01 &&
+			progress < 0.99;
+
+		// Helper to get interpolated position
+		const getPosition = (
+			id: string,
+			isEnode: boolean
+		): { x: number; y: number } => {
+			if (isEnode) {
+				const nodeId = parseInt(id.substring(5)); // "node-123" -> 123
+				const currentPos = state.layout!.nodes.get(nodeId);
+				if (!currentPos) return { x: 0, y: 0 };
+
+				if (shouldInterpolate) {
+					const nextPos = nextState.layout!.nodes.get(nodeId);
+					if (nextPos) {
+						return {
+							x: currentPos.x + (nextPos.x - currentPos.x) * progress,
+							y: currentPos.y + (nextPos.y - currentPos.y) * progress
+						};
+					}
+				}
+				return currentPos;
+			} else {
+				// Group node (class or set)
+				const currentPos = state.layout!.groups.get(id);
+				if (!currentPos) return { x: 0, y: 0 };
+
+				if (shouldInterpolate) {
+					const nextPos = nextState.layout!.groups.get(id);
+					if (nextPos) {
+						return {
+							x: currentPos.x + (nextPos.x - currentPos.x) * progress,
+							y: currentPos.y + (nextPos.y - currentPos.y) * progress
+						};
+					}
+				}
+				return currentPos;
+			}
+		};
+
+		// Build Flow nodes from state structure
 
 		// In deferred mode, group E-Classes by their canonical Union-Find set
 		// In naive mode, render E-Classes directly without union-find grouping
@@ -126,127 +177,153 @@
 				sets.get(canonicalId)!.push(eclass);
 			}
 
-			// Create nodes for each set
+			// Create Flow nodes for each set
 			for (const [canonicalId, eclassesInSet] of sets) {
-				const setChildren: any[] = [];
+				const setId = `set-${canonicalId}`;
+				const setPos = getPosition(setId, false);
+				const setLayout = state.layout.groups.get(setId);
+
+				// Create union-find group node
+				newNodes.push({
+					id: setId,
+					type: "unionFindGroup",
+					position: setPos,
+					data: {
+						label: `Set: ${canonicalId}`,
+						width: setLayout?.width ?? 100,
+						height: setLayout?.height ?? 100
+					},
+					style: `width: ${setLayout?.width ?? 100}px; height: ${setLayout?.height ?? 100}px; background: transparent; border: none; padding: 0;`,
+					draggable: false
+				});
 
 				for (const eclass of eclassesInSet) {
-					const classChildren: any[] = [];
+					const classId = `class-${eclass.id}`;
+					const classPos = getPosition(classId, false);
+					const classLayout = state.layout.groups.get(classId);
 					const isCanonical = eclass.id === canonicalId;
 
-					// E-Class groups use neutral gray (not hash-based)
-					const eclassColor = "#9ca3af"; // Neutral gray
+					const eclassColor = "#9ca3af";
 					const eclassLightColor = "rgba(156, 163, 175, 0.1)";
 
-					// E-Nodes still use hash-based identity color (passed separately)
-					const enodeIdentityColor = getColorForId(eclass.id); // For handles
-
-					eclass.nodes.forEach((enode, index) => {
-						const nodeId = `node-${enode.id}`;
-
-						classChildren.push({
-							id: nodeId,
-							width: 50,
-							height: 50,
-							data: {
-								id: enode.id,
-								eclassId: eclass.id,
-								color: enodeIdentityColor, // E-Node identity for handles
-								enodeColor: getColorForId(enode.id), // E-Node identity circle
-								args: enode.args,
-								label: enode.op,
-							},
-						});
-					});
-
-					setChildren.push({
-						id: `class-${eclass.id}`,
-						children: classChildren,
-						layoutOptions: {
-							"elk.algorithm": "layered",
-							"elk.direction": "DOWN",
-							"elk.padding": `[top=8,left=8,bottom=8,right=8]`,
-							"elk.spacing.nodeNode": "8",
-						},
+					// Create e-class group node
+					newNodes.push({
+						id: classId,
+						type: "eclassGroup",
+						position: classPos,
+						parentId: setId,
+						extent: "parent",
 						data: {
 							eclassId: eclass.id,
-							color: eclassColor, // Neutral gray
+							color: eclassColor,
 							lightColor: eclassLightColor,
 							isCanonical: isCanonical,
 							label: `ID: ${eclass.id}`,
-							nodeIds: eclass.nodes.map((n) => n.id), // For selection logic
+							nodeIds: eclass.nodes.map((n) => n.id),
+							width: classLayout?.width ?? 80,
+							height: classLayout?.height ?? 80
 						},
+						style: `width: ${classLayout?.width ?? 80}px; height: ${classLayout?.height ?? 80}px; background: transparent; border: none; padding: 0;`,
+						draggable: false
 					});
-				}
 
-				// Create the Union-Find Group Node
-				elkNodes.push({
-					id: `set-${canonicalId}`,
-					children: setChildren,
-					layoutOptions: {
-						"elk.algorithm": "layered",
-						"elk.direction": "DOWN",
-						"elk.padding": `[top=8,left=20,bottom=8,right=8]`,
-						"elk.spacing.nodeNode": "10",
-					},
-					data: {
-						label: `Set: ${canonicalId}`,
-					},
-				});
+					// Create e-node Flow nodes
+					const enodeIdentityColor = getColorForId(eclass.id);
+
+					for (const enode of eclass.nodes) {
+						const nodeId = `node-${enode.id}`;
+						const nodePos = getPosition(nodeId, true);
+						const visualState = state.visualStates?.nodes.get(enode.id);
+						const nextVisualState = nextState?.visualStates?.nodes.get(enode.id);
+
+						newNodes.push({
+							id: nodeId,
+							type: "enode",
+							position: nodePos,
+							parentId: classId,
+							extent: "parent",
+							data: {
+								id: enode.id,
+								eclassId: eclass.id,
+								color: enodeIdentityColor,
+								enodeColor: getColorForId(enode.id),
+								args: enode.args,
+								label: enode.op,
+								visualState: visualState,
+								nextVisualState: nextVisualState,
+								progress: progress
+							},
+							style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
+							draggable: false
+						});
+					}
+				}
 			}
 		} else {
+			// Naive mode: just e-classes and e-nodes
 			for (const eclass of state.eclasses) {
-				const classChildren: any[] = [];
+				const classId = `class-${eclass.id}`;
+				const classPos = getPosition(classId, false);
+				const classLayout = state.layout.groups.get(classId);
 
-				// E-Class groups use neutral gray
 				const eclassColor = "#9ca3af";
 				const eclassLightColor = "rgba(156, 163, 175, 0.1)";
 
-				// E-Nodes use hash-based identity color
+				// Create e-class group node
+				newNodes.push({
+					id: classId,
+					type: "eclassGroup",
+					position: classPos,
+					data: {
+						eclassId: eclass.id,
+						color: eclassColor,
+						lightColor: eclassLightColor,
+						isCanonical: true,
+						label: `ID: ${eclass.id}`,
+						nodeIds: eclass.nodes.map((n) => n.id),
+						width: classLayout?.width ?? 80,
+						height: classLayout?.height ?? 80
+					},
+					style: `width: ${classLayout?.width ?? 80}px; height: ${classLayout?.height ?? 80}px; background: transparent; border: none; padding: 0;`,
+					draggable: false
+				});
+
 				const enodeIdentityColor = getColorForId(eclass.id);
 
-				eclass.nodes.forEach((enode, index) => {
+				for (const enode of eclass.nodes) {
 					const nodeId = `node-${enode.id}`;
+					const nodePos = getPosition(nodeId, true);
+					const visualState = state.visualStates?.nodes.get(enode.id);
+					const nextVisualState = nextState?.visualStates?.nodes.get(enode.id);
 
-					classChildren.push({
+					newNodes.push({
 						id: nodeId,
-						width: 50,
-						height: 50,
+						type: "enode",
+						position: nodePos,
+						parentId: classId,
+						extent: "parent",
 						data: {
 							id: enode.id,
 							eclassId: eclass.id,
 							color: enodeIdentityColor,
-							enodeColor: getColorForId(enode.id), // E-Node identity color
+							enodeColor: getColorForId(enode.id),
 							args: enode.args,
 							label: enode.op,
+							visualState: visualState,
+							nextVisualState: nextVisualState,
+							progress: progress
 						},
+						style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
+						draggable: false
 					});
-				});
-
-				elkNodes.push({
-					id: `class-${eclass.id}`,
-					children: classChildren,
-					layoutOptions: {
-						"elk.algorithm": "layered",
-						"elk.direction": "DOWN",
-						"elk.padding": `[top=8,left=8,bottom=8,right=8]`,
-						"elk.spacing.nodeNode": "8",
-					},
-					data: {
-						eclassId: eclass.id,
-						color: eclassColor, // Neutral gray
-						lightColor: eclassLightColor,
-						isCanonical: true,
-						label: `ID: ${eclass.id}`,
-						nodeIds: eclass.nodes.map((n) => n.id), // For selection logic
-					},
-				});
+				}
 			}
 		}
 
+		// Create edges
 		let edgeId = 0;
 		for (const eclass of state.eclasses) {
-			eclass.nodes.forEach((enode) => {
+			for (const enode of eclass.nodes) {
 				const sourceId = `node-${enode.id}`;
 
 				enode.args.forEach((argClassId, argIndex) => {
@@ -259,84 +336,11 @@
 							? `set-${canonicalArgId}`
 							: `class-${canonicalArgId}`;
 
-					elkEdges.push({
-						id: `edge-${edgeId++}`,
-						sources: [sourceId],
-						targets: [targetId],
-						sourcePort: `port-${enode.id}-${argIndex}`, // Connect from specific port
-					});
-				});
-			});
-		}
-
-		const graph = {
-			id: "root",
-			layoutOptions: {
-				"elk.algorithm": "layered",
-				"elk.direction": "DOWN",
-				"elk.spacing.nodeNode": "40",
-				"elk.layered.spacing.nodeNodeBetweenLayers": "40",
-				"elk.hierarchyHandling": "INCLUDE_CHILDREN",
-			},
-			children: elkNodes,
-			edges: elkEdges,
-		};
-
-		try {
-			const layoutedGraph = await elk.layout(graph);
-
-			const newNodes: Node[] = [];
-			const newEdges: Edge[] = [];
-
-			function traverse(node: any, parentId?: string) {
-				const isSet = node.id.startsWith("set-");
-				const isClass = node.id.startsWith("class-");
-				const isEnode = node.id.startsWith("node-");
-
-				let type = "enode";
-				if (isSet) type = "unionFindGroup";
-				else if (isClass) type = "eclassGroup";
-
-				const flowNode: Node = {
-					id: node.id,
-					type: type,
-					position: { x: node.x, y: node.y },
-					data: {
-						label: node.labels?.[0]?.text || "",
-						width: node.width,
-						height: node.height,
-						...node.data,
-					},
-					style: `width: ${node.width}px; height: ${node.height}px;`,
-					parentId: parentId,
-					extent: parentId ? "parent" : undefined, // All nodes with parents should be constrained
-					draggable: false,
-				};
-
-				// Styles are now handled by the components based on data
-				flowNode.style +=
-					"background: transparent; border: none; padding: 0;";
-
-				newNodes.push(flowNode);
-
-				if (node.children) {
-					node.children.forEach((child: any) =>
-						traverse(child, node.id),
-					);
-				}
-			}
-
-			if (layoutedGraph.children) {
-				layoutedGraph.children.forEach((child: any) => traverse(child));
-			}
-
-			if (layoutedGraph.edges) {
-				layoutedGraph.edges.forEach((edge: any) => {
 					newEdges.push({
-						id: edge.id,
-						source: edge.sources[0],
-						target: edge.targets[0],
-						sourceHandle: edge.sourcePort, // Map sourcePort to sourceHandle
+						id: `edge-${edgeId++}`,
+						source: sourceId,
+						target: targetId,
+						sourceHandle: `port-${enode.id}-${argIndex}`,
 						type: "smoothstep",
 						animated: false,
 						style: "stroke: #b1b1b7;",
@@ -347,16 +351,15 @@
 					});
 				});
 			}
-
-			nodes.set(newNodes);
-			edges.set(newEdges);
-		} catch (err) {
-			console.error("ELK Layout Error:", err);
 		}
+
+		// Update stores
+		nodes.set(newNodes);
+		edges.set(newEdges);
 	}
 
-	// React to state changes
-	$: updateLayout($currentState);
+	// React to state changes (use scrubData for interpolation support)
+	$: updateLayout($scrubData.currentState, $scrubData.nextState, $scrubData.progress);
 </script>
 
 <div class="graph-container">

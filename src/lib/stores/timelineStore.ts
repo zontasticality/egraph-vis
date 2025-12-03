@@ -4,16 +4,19 @@ import { TimelineEngine } from '../engine/timeline';
 
 // --- Stores ---
 
-// --- Stores ---
-
 export const timeline = writable<EGraphTimeline | null>(null);
-export const currentIndex = writable<number>(0);
 export const isPlaying = writable<boolean>(false);
 export const playbackSpeed = writable<number>(1000); // ms per step
 export const transitionMode = writable<'smooth' | 'instant'>('smooth');
 export const currentPreset = writable<PresetConfig | null>(null);
 
-// Derived store for the current state
+// NEW: Float-based timeline position (enables scrubbing interpolation)
+export const timelinePosition = writable<number>(0);
+
+// DERIVED: Integer index (backward compatible)
+export const currentIndex = derived(timelinePosition, $pos => Math.floor($pos));
+
+// DERIVED: Current state (backward compatible)
 export const currentState = derived(
     [timeline, currentIndex],
     ([$timeline, $currentIndex]) => {
@@ -24,7 +27,42 @@ export const currentState = derived(
     }
 );
 
-// Derived store for progress (0 to 1)
+// DERIVED: Scrubbing data with interpolation info
+export const scrubData = derived(
+    [timeline, timelinePosition],
+    ([$timeline, $pos]) => {
+        if (!$timeline || $timeline.states.length === 0) {
+            return {
+                currentIndex: 0,
+                nextIndex: 0,
+                progress: 0,
+                currentState: null,
+                nextState: null,
+                isScrubbing: false
+            };
+        }
+
+        const index = Math.floor($pos);
+        const progress = $pos % 1;
+        const maxIndex = $timeline.states.length - 1;
+        const clampedIndex = Math.max(0, Math.min(index, maxIndex));
+        const nextIndex = Math.min(clampedIndex + 1, maxIndex);
+
+        // Consider "scrubbing" if progress is meaningfully between snapshots
+        const isScrubbing = progress > 0.01 && progress < 0.99 && nextIndex > clampedIndex;
+
+        return {
+            currentIndex: clampedIndex,
+            nextIndex,
+            progress,
+            currentState: $timeline.states[clampedIndex],
+            nextState: nextIndex > clampedIndex ? $timeline.states[nextIndex] : null,
+            isScrubbing
+        };
+    }
+);
+
+// Derived store for progress (0 to 1) - backward compatible
 export const progress = derived(
     [timeline, currentIndex],
     ([$timeline, $currentIndex]) => {
@@ -38,15 +76,15 @@ export const progress = derived(
 let engine: TimelineEngine | null = null;
 let playInterval: any = null;
 
-export function loadPreset(preset: PresetConfig, options: EngineOptions = { implementation: 'deferred', iterationCap: 100 }) {
+export async function loadPreset(preset: PresetConfig, options: EngineOptions = { implementation: 'deferred', iterationCap: 100 }) {
     stop();
     currentPreset.set(preset);
     engine = new TimelineEngine();
     engine.loadPreset(preset, options);
-    const newTimeline = engine.runUntilHalt();
+    const newTimeline = await engine.runUntilHalt();
 
     timeline.set(newTimeline);
-    currentIndex.set(0);
+    timelinePosition.set(0);  // Use float position
     transitionMode.set('smooth');
 }
 
@@ -54,7 +92,7 @@ export async function loadPresetById(id: string, options: EngineOptions = { impl
     const { getPresetById } = await import('../presets');
     const preset = getPresetById(id);
     if (preset) {
-        loadPreset(preset, options);
+        await loadPreset(preset, options);
     }
 }
 
@@ -69,25 +107,26 @@ export function goToStep(index: number, instant = false) {
     }
 
     const safeIndex = Math.max(0, Math.min(index, tl.states.length - 1));
-    currentIndex.set(safeIndex);
-
-    // If we set it to instant, we might want to reset it to smooth after a tick? 
-    // Or let the caller handle it. For scrubbing, we usually want instant.
-    // For now, let's leave it as set.
+    timelinePosition.set(safeIndex);  // Use float position (integer value)
 }
 
-export function scrubToStep(index: number) {
-    // Scrubbing implies instant transition
-    goToStep(index, true);
+export function scrubTo(position: number) {
+    // Scrubbing to fractional position (enables interpolation)
+    const tl = get(timeline);
+    if (!tl) return;
+
+    const max = tl.states.length - 1;
+    const safePos = Math.max(0, Math.min(position, max));
+    timelinePosition.set(safePos);
 }
 
 export function nextStep() {
     transitionMode.set('smooth');
     const tl = get(timeline);
     if (!tl) return;
-    const current = get(currentIndex);
-    if (current < tl.states.length - 1) {
-        currentIndex.set(current + 1);
+    const current = get(timelinePosition);
+    if (Math.floor(current) < tl.states.length - 1) {
+        timelinePosition.set(Math.floor(current) + 1);
     } else {
         stop(); // Stop if reached end
     }
@@ -95,9 +134,9 @@ export function nextStep() {
 
 export function prevStep() {
     transitionMode.set('smooth');
-    const current = get(currentIndex);
-    if (current > 0) {
-        currentIndex.set(current - 1);
+    const current = get(timelinePosition);
+    if (Math.floor(current) > 0) {
+        timelinePosition.set(Math.floor(current) - 1);
     }
 }
 
@@ -115,8 +154,8 @@ function start() {
     if (!tl) return;
 
     // If at end, restart
-    if (get(currentIndex) >= tl.states.length - 1) {
-        currentIndex.set(0);
+    if (Math.floor(get(timelinePosition)) >= tl.states.length - 1) {
+        timelinePosition.set(0);
     }
 
     isPlaying.set(true);
