@@ -156,7 +156,8 @@
 	/* 3-Panel Grid Layout */
 	.panel-grid {
 		display: grid;
-		grid-template-rows: 1fr 1fr minmax(50px, auto); /* Hashcons / E-Classes / Worklist (auto-size) */
+		grid-template-columns: minmax(min-content, 1fr) minmax(min-content, 2fr); /* Balance both, but e-class gets 2x priority */
+		grid-template-rows: 1fr minmax(50px, auto); /* Two rows: Top (lists) / Bottom (worklist) */
 		height: 100%;
 		gap: 0;
 		border-top: 1px solid var(--border-color, #e5e7eb);
@@ -170,7 +171,12 @@
 		min-height: 0; /* Important for flex children to shrink */
 	}
 
+	.panel:nth-child(1) {
+		border-right: 1px solid var(--border-color, #e5e7eb);
+	}
+
 	.panel:last-child {
+		grid-column: 1 / -1; /* Span both columns */
 		border-bottom: none;
 	}
 
@@ -261,8 +267,7 @@
 		gap: 4px;
 		font-size: 11px;
 		color: var(--text-secondary, #6b7280);
-		overflow-x: auto;
-		white-space: nowrap;
+		flex-wrap: wrap;
 	}
 
 	.badge {
