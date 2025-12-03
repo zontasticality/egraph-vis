@@ -1,13 +1,13 @@
 # SPEC-INTERPOLATION: Style & Position Blending
 
-Defines how visual properties (colors, positions, opacity) are blended between snapshots during timeline scrubbing. This spec focuses on performance through intelligent caching and browser-native acceleration.
+Defines how visual properties (colors, positions, opacity) are blended between snapshots during timeline scrubbing. This spec focuses on simplicity and browser-native acceleration.
 
 ## 1. Objectives
 
-- **Smooth Transitions**: Linear interpolation of all visual properties for seamless scrubbing
-- **Cache Efficiency**: Minimize redundant calculations through intelligent caching strategy
+- **Smooth Transitions**: Linear interpolation of visual properties for seamless scrubbing
+- **Simplicity**: Local component computation with Svelte reactivity (no complex caching)
 - **Browser Acceleration**: Leverage CSS `color-mix()` for GPU-accelerated color blending
-- **Handle Edge Cases**: Gracefully handle nodes/edges appearing or disappearing
+- **Handle Edge Cases**: Gracefully handle nodes appearing or disappearing
 
 ## 2. Interpolation Model
 
@@ -16,9 +16,9 @@ Defines how visual properties (colors, positions, opacity) are blended between s
 **Formula**: `value = start + (end - start) × progress`
 
 **Properties Interpolated**:
-- **Position**: x, y coordinates
-- **Color**: Border color, background color, text color
-- **Opacity**: Fade in/out for appearing/disappearing elements
+- **Position**: x, y coordinates (simple arithmetic)
+- **Color**: Border, background, text (CSS color-mix string template)
+- **Opacity**: Direct use of progress value for fades
 
 **Not Interpolated** (discrete):
 - **Border style**: solid vs dashed (snaps at 50% threshold)
@@ -37,273 +37,249 @@ Given timeline position `p` (e.g., 4.5):
 - `0.5`: Halfway between current and next
 - `1.0`: Entirely at next snapshot
 
-**Snapping Thresholds**:
-- `progress < 0.01`: Treat as 0.0 (current only)
-- `progress > 0.99`: Treat as 1.0 (next only)
-- Avoids micro-interpolations that are imperceptible
+**Snapping Thresholds** (optional optimization):
+- `progress < 0.01`: Treat as 0.0 (current only, skip interpolation)
+- `progress > 0.99`: Treat as 1.0 (next only, skip interpolation)
 
-## 3. Style Interpolation
+## 3. Component-Local Interpolation
 
-### 3.1 The Caching Problem
+### 3.1 Philosophy
 
-**Naive Approach**: Cache by node ID
-```
-Cache Key: node-42-progress-0.5
-Problem: 10,000 nodes × 20 progress values = 200,000 cache entries
-Memory: 200,000 × 48 bytes = 9.6 MB (wasteful)
-```
+Each component computes its own interpolated state using Svelte's reactive statements. No centralized interpolation engine or caching layer - keep it simple.
 
-**Smart Approach**: Cache by style class transition
-```
-Cache Key: MatchedLHS→NewNode-progress-0.5
-Problem: 5 classes × 5 classes × 20 progress values = 500 cache entries
-Memory: 500 × 48 bytes = 24 KB (efficient!)
-```
+**Benefits**:
+- Simpler architecture (no cache management)
+- More maintainable (logic is local, easy to understand)
+- Leverages Svelte's built-in memoization
+- Fast enough for 10,000 nodes (2-3ms per frame)
 
-**Insight**: Many nodes share the same style class transition. Cache the interpolated style once and reuse it for all nodes with that transition.
+### 3.2 Component Pattern
 
-### 3.2 Progress Quantization
+Each FlowENode component receives:
+- Current visual state enum
+- Next visual state enum (if exists)
+- Progress value (0.0 to 1.0)
 
-To further reduce cache keys, quantize progress values:
+And computes interpolated appearance reactively:
 
-**Strategy**: Round to nearest 0.05 (20 steps)
-```
-progress = 0.523 → 0.50
-progress = 0.574 → 0.55
-progress = 0.991 → 1.00
-```
+```svelte
+<script>
+// Inputs from parent
+export let currentStyleClass: NodeStyleClass;
+export let nextStyleClass: NodeStyleClass | undefined;
+export let progress: number;
 
-**Rationale**:
-- Human eye cannot distinguish 0.50 from 0.52
-- Reduces cache keys by 5× (100 → 20 unique progress values)
-- Scrubbing feels equally smooth
+// Look up style definitions
+$: currentStyle = NODE_STYLES[currentStyleClass];
+$: nextStyle = nextStyleClass ? NODE_STYLES[nextStyleClass] : currentStyle;
 
-**Trade-off**: Slight quantization artifacts (imperceptible) for massive cache efficiency.
+// Interpolate colors using CSS color-mix (string template - cheap!)
+$: borderColor = progress > 0.01 && nextStyleClass
+    ? `color-mix(in srgb, ${currentStyle.borderColor} ${(1-progress)*100}%, ${nextStyle.borderColor})`
+    : currentStyle.borderColor;
 
-### 3.3 Cache Key Structure
+$: backgroundColor = progress > 0.01 && nextStyleClass
+    ? `color-mix(in srgb, ${currentStyle.backgroundColor} ${(1-progress)*100}%, ${nextStyle.backgroundColor})`
+    : currentStyle.backgroundColor;
 
-**Format**: `{currentClass}-{nextClass}-{quantizedProgress}`
+// Border style snaps at midpoint
+$: borderStyle = progress < 0.5 ? currentStyle.borderStyle : nextStyle.borderStyle;
+</script>
 
-**Examples**:
-```
-0-1-0.50  → Default to MatchedLHS at 50%
-1-2-0.75  → MatchedLHS to NewNode at 75%
-3-0-0.00  → NonCanonical to Default at 0% (not interpolating)
-```
-
-**Cache Size Calculation**:
-- 5 node style classes × 5 = 25 possible transitions
-- 20 quantized progress values
-- Max keys: 25 × 20 = 500 entries
-- Memory: 500 × 48 bytes = 24 KB (negligible)
-
-### 3.4 Interpolated Style Structure
-
-**Output Format**:
-```
-InterpolatedStyle: {
-    // Concrete values for current position
-    borderColor: string,
-    borderWidth: number,
-    borderStyle: 'solid' | 'dashed',
-    backgroundColor: string,
-    textColor: string,
-    opacity: number,
-
-    // Metadata for CSS color-mix
-    _progress: number,           // Quantized progress
-    _nextBorderColor?: string,   // For CSS interpolation
-    _nextBackgroundColor?: string
-}
+<div
+    style:border-color={borderColor}
+    style:border-style={borderStyle}
+    style:background-color={backgroundColor}
+>
+  ...
+</div>
 ```
 
-**Usage Pattern**:
-1. Look up `InterpolatedStyle` from cache
-2. If `_progress > 0`, use CSS `color-mix()` for smooth blending
-3. Otherwise, use direct color values
+**Cost Per Node**: ~3 hash lookups + 2 string templates = negligible
 
 ## 4. Color Interpolation
 
 ### 4.1 CSS color-mix() Strategy
 
 **Modern Approach** (Chrome 111+, Firefox 113+, Safari 16.2+):
-```
-CSS: color-mix(in srgb, #facc15 50%, #ef4444)
+```css
+color-mix(in srgb, #facc15 50%, #ef4444)
 ```
 
 **Benefits**:
 - GPU-accelerated (browser-native)
 - Perceptually accurate (sRGB color space)
-- Minimal JavaScript overhead
+- Minimal JavaScript overhead (just string template)
 
 **Fallback** (Older Browsers):
-```
-JavaScript: interpolateRGB('#facc15', '#ef4444', 0.5)
-→ Convert to RGB, lerp each channel, convert back
+
+Detect support and provide JavaScript fallback if needed:
+
+```typescript
+const supportsColorMix = CSS.supports('color', 'color-mix(in srgb, red, blue)');
+
+function getInterpolatedColor(color1: string, color2: string, progress: number): string {
+    if (supportsColorMix) {
+        return `color-mix(in srgb, ${color1} ${(1-progress)*100}%, ${color2})`;
+    }
+    // Fallback: JavaScript RGB interpolation
+    return interpolateRGB(color1, color2, progress);
+}
 ```
 
 ### 4.2 Browser Compatibility
-
-**Feature Detection**:
-```
-CSS.supports('color', 'color-mix(in srgb, red, blue)')
-→ Use native color-mix
-
-Fallback:
-→ Polyfill with JavaScript RGB interpolation
-```
 
 **Browser Support**:
 - ✅ Chrome 111+ (March 2023)
 - ✅ Firefox 113+ (May 2023)
 - ✅ Safari 16.2+ (December 2022)
-- ❌ IE, Legacy Edge (acceptable)
+- ❌ IE, Legacy Edge (acceptable - provide fallback)
 
-**Decision**: Use CSS color-mix as primary, with JavaScript fallback for unsupported browsers (rare in 2024+).
+**Decision**: Use CSS color-mix as primary, with simple JavaScript fallback for older browsers.
 
-### 4.3 Color Space Considerations
+### 4.3 Color Space
 
-**sRGB vs Oklab**:
-- **sRGB**: Standard, widely supported, can produce muddy mid-tones
-- **Oklab**: Perceptually uniform, better interpolation, newer support
+**Recommendation**: Use `srgb` for broad compatibility and predictable results.
 
-**Recommendation**: Use `srgb` for broad compatibility. Consider `oklab` as future enhancement.
+**Future Enhancement**: Consider `oklab` for perceptually uniform interpolation (better color accuracy), but requires newer browser support.
 
 ## 5. Position Interpolation
 
 ### 5.1 Standard Case (Node Exists in Both Snapshots)
 
-**Formula**:
-```
-x = current.x + (next.x - current.x) × progress
-y = current.y + (next.y - current.y) × progress
-opacity = 1.0
+**Formula** (applied in GraphPane when building node array):
+```typescript
+const currentPos = currentLayout.nodes.get(nodeId);
+const nextPos = nextLayout?.nodes.get(nodeId);
+
+const x = currentPos.x + (nextPos.x - currentPos.x) * progress;
+const y = currentPos.y + (nextPos.y - currentPos.y) * progress;
+const opacity = 1.0;
 ```
 
-**Result**: Smooth movement from current position to next position.
+**Cost**: 4 arithmetic operations per node (negligible)
 
 ### 5.2 Appearing Nodes (Only in Next Snapshot)
 
 **Strategy**: Fade in at final position
 
-```
-x = next.x
-y = next.y
-opacity = min(1.0, progress × 2)  // Fade in faster (50% of transition)
+```typescript
+const x = nextPos.x;
+const y = nextPos.y;
+const opacity = Math.min(1.0, progress * 2);  // Fade in at 2× speed
 ```
 
-**Rationale**:
-- Node doesn't exist in current snapshot, no "from" position to interpolate
-- Showing it immediately at next position with fade-in is most intuitive
-- 2× fade speed ensures node is fully visible by midpoint
+**Rationale**: Node appears at its final position while fading in. 2× speed ensures full visibility by midpoint.
 
 ### 5.3 Disappearing Nodes (Only in Current Snapshot)
 
 **Strategy**: Fade out at current position
 
-```
-x = current.x
-y = current.y
-opacity = max(0.0, 1.0 - progress × 2)  // Fade out faster
-```
-
-**Rationale**:
-- Node will not exist in next snapshot
-- Hold position while fading out feels natural
-- 2× fade speed completes fade before reaching next snapshot
-
-### 5.4 Non-Existent Nodes (In Neither Snapshot)
-
-**Strategy**: Don't render
-
-```
-return undefined
+```typescript
+const x = currentPos.x;
+const y = currentPos.y;
+const opacity = Math.max(0.0, 1.0 - progress * 2);  // Fade out at 2× speed
 ```
 
-**Context**: Unlikely scenario (node was in previous or will be in future snapshot). Skip rendering.
+**Rationale**: Node holds position while fading out. Fully transparent before reaching next snapshot.
 
-### 5.5 Position Caching
+### 5.4 Non-Existent Nodes
 
-**Question**: Should positions be cached like styles?
+**Strategy**: Don't render (skip in node array construction)
 
-**Answer**: No, position interpolation is cheap (3 arithmetic operations) and cache hit rate would be low (positions are unique per node). Compute on-demand.
+## 6. Opacity for Fades
 
-## 6. Edge Interpolation
+### 6.1 Simplest Approach
 
-### 6.1 Edge Existence
+Opacity directly uses the progress value - no interpolation function needed:
 
-Edges are defined by source node and target group. An edge exists if:
-- Source node exists in the snapshot
-- Target group exists in the snapshot
-- Source node's argument points to target group
+```typescript
+// Appearing: opacity increases with progress
+opacity = progress;
 
-### 6.2 Edge Appearance/Disappearance
+// Disappearing: opacity decreases with progress
+opacity = 1.0 - progress;
 
-**Same Rules as Nodes**:
-- Appearing: Fade in at next position
-- Disappearing: Fade out at current position
-- Opacity drives visibility
-
-**Implementation**: Edges inherit opacity from their source node. No separate interpolation needed.
-
-### 6.3 Edge Color Interpolation
-
-**Simple Rule**: Edges use source node's port color (no separate interpolation)
-
-## 7. Performance Optimizations
-
-### 7.1 Cache Warming
-
-**Strategy**: Pre-populate cache with common transitions when timeline loads
-
-**Common Transitions**:
-- Default → MatchedLHS (read phase)
-- MatchedLHS → NewNode (write phase)
-- NewNode → Default (completion)
-
-**Benefit**: First scrub has cache hits immediately, no stutter.
-
-### 7.2 Batching Updates
-
-**Problem**: Updating 10,000 nodes individually triggers 10,000 Svelte reactivity cycles.
-
-**Solution**: Batch updates into a single derived store update
-```
-$: interpolatedNodes = computeAllInterpolations($scrubData)
+// Standard (exists in both): always visible
+opacity = 1.0;
 ```
 
-**Benefit**: One reactivity cycle, not 10,000.
+For faster fades (recommended for appearing/disappearing), multiply by 2× and clamp:
 
-### 7.3 Disable Interactions During Scrubbing
-
-**Rationale**: Selection/hover logic adds overhead during high-frequency scrubbing updates.
-
-**Strategy**: Use `isScrubbing` flag to disable:
-- Node selection (click handlers return early)
-- Hover effects (no highlights)
-- Edge highlighting
-
-**Enabled During Scrubbing**:
-- Pan and zoom (essential for navigation)
-- Slider dragging (obviously)
-
-### 7.4 Throttling Updates
-
-**Problem**: User drags slider generating 100 position updates per second.
-
-**Solution**: Throttle updates to 60fps (16.7ms intervals)
-```
-let lastUpdate = 0;
-if (now - lastUpdate < 16.7) return;
-lastUpdate = now;
-updateView();
+```typescript
+opacity = Math.min(1.0, progress * 2);  // Fade in
+opacity = Math.max(0.0, 1.0 - progress * 2);  // Fade out
 ```
 
-**Benefit**: Reduces unnecessary renders, maintains smooth appearance.
+## 7. Edge Interpolation
 
-## 8. Interpolation Flow
+### 7.1 Edge Behavior
 
-### 8.1 End-to-End Process
+Edges follow the same rules as their source nodes:
+- Position: Endpoints interpolate with source/target nodes (automatic via Svelte Flow)
+- Opacity: Inherit from source node
+- Color: Based on port color (no interpolation needed)
+
+**Implementation**: No special edge interpolation code needed - Svelte Flow handles edge positioning automatically when node positions change.
+
+## 8. Performance Characteristics
+
+### 8.1 Cost Analysis (10,000 nodes per frame @ 60fps)
+
+| Operation | Count | Cost | Total |
+|-----------|-------|------|-------|
+| Style lookup | 20,000 | 0.1ms | 0.1ms |
+| String template (color-mix) | 20,000 | 1-2ms | 1-2ms |
+| Position arithmetic | 30,000 | 0.1ms | 0.1ms |
+| **Total per frame** | | | **~2-3ms** |
+
+**Frame budget**: 16.7ms @ 60fps
+**Interpolation overhead**: 15-20% of budget (acceptable)
+
+### 8.2 When to Optimize
+
+**Profile first!** Only add optimization complexity if:
+- Frame rate drops below 30fps on target hardware
+- Profiling shows interpolation is >30% of frame time
+- Evidence supports the complexity trade-off
+
+**Likely optimizations** (if needed):
+- Throttle slider updates to 30fps instead of 60fps
+- Skip interpolation for off-screen nodes
+- Use `will-change: transform` CSS hint for positions
+
+## 9. Interaction During Scrubbing
+
+### 9.1 What Works During Scrubbing
+
+**Enabled** (no performance impact):
+- Node selection (click to select)
+- Pan and zoom
+- Slider dragging
+
+**Rationale**: These are low-frequency events (clicks, not mousemove), so no performance concern.
+
+### 9.2 Optional Performance Optimization
+
+If performance becomes an issue, consider disabling high-frequency events:
+
+**Potentially Disable** (only if profiling shows bottleneck):
+- Hover effects (mousemove highlighting)
+- Edge highlighting on port hover
+
+**Implementation**: Use `isScrubbing` flag to skip expensive hover logic:
+```svelte
+function handleMouseEnter() {
+    if ($scrubData.isScrubbing) return;  // Skip during scrubbing
+    // ... normal hover logic
+}
+```
+
+**Important**: Only disable hover effects if testing shows they impact frame rate. Don't prematurely optimize.
+
+## 10. Data Flow
+
+### 10.1 End-to-End Process
 
 **Step 1: User Drags Slider**
 ```
@@ -311,147 +287,126 @@ Input: position = 4.5
 Derived: currentIndex = 4, nextIndex = 5, progress = 0.5
 ```
 
-**Step 2: Fetch Snapshots**
+**Step 2: Store Updates**
 ```
-currentState = timeline.states[4]
-nextState = timeline.states[5]
-```
-
-**Step 3: Fetch Visual States**
-```
-currentVisual = currentState.visualStates.nodes.get(42)
-nextVisual = nextState?.visualStates.nodes.get(42)
-```
-
-**Step 4: Interpolate Style**
-```
-quantizedProgress = 0.50
-cacheKey = "1-2-0.50"
-style = cache.get(cacheKey) || computeAndCache(...)
+scrubData derived store recomputes:
+{
+    currentIndex: 4,
+    nextIndex: 5,
+    progress: 0.5,
+    currentState: timeline.states[4],
+    nextState: timeline.states[5],
+    isScrubbing: true
+}
 ```
 
-**Step 5: Interpolate Position**
+**Step 3: GraphPane Reacts**
 ```
-currentPos = currentState.layout?.nodes.get(42)
-nextPos = nextState?.layout?.nodes.get(42)
-pos = lerp(currentPos, nextPos, 0.5)
-```
+$: buildNodeArray($scrubData)
 
-**Step 6: Render**
-```
-Apply style colors via CSS color-mix
-Set node position to interpolated pos
-Set opacity for fade in/out
+For each node:
+    - Fetch current/next visual states
+    - Interpolate position (simple arithmetic)
+    - Pass data to FlowENode component
 ```
 
-### 8.2 Caching Interaction
+**Step 4: FlowENode Reacts**
+```
+$: borderColor = interpolateColor(current, next, progress)
+$: position = interpolatedPos
 
-**First Scrub to Position 4.5**:
-```
-Cache miss → Compute interpolated style → Store in cache
-Next frame: Cache hit → Return cached style
-```
-
-**Scrub to Position 5.5 (Similar Transition)**:
-```
-Same style classes, same quantized progress → Cache hit immediately
+Svelte updates DOM efficiently
 ```
 
-**Cache Hit Rate**: Expected >95% after first few scrubs.
+### 10.2 Svelte's Built-in Optimizations
 
-## 9. Testing Strategy
+Svelte automatically:
+- Memoizes reactive statements (only recomputes on input change)
+- Batches DOM updates
+- Avoids unnecessary re-renders
 
-### 9.1 Unit Tests
+**No manual optimization needed** - trust Svelte's reactivity system.
 
-**Style Interpolation**:
-- Verify quantization rounds correctly
-- Check cache key generation
-- Confirm color interpolation math
+## 11. Edge Cases & Fallbacks
 
-**Position Interpolation**:
-- Standard case: both snapshots have node
-- Appearing: only next has node
-- Disappearing: only current has node
-- Non-existent: neither has node
+### 11.1 Missing Layout Data
 
-### 9.2 Performance Tests
+**Scenario**: Next layout not ready yet
 
-**Cache Hit Rate**: Measure over 100 scrubs
-**Interpolation Time**: Measure per-frame cost for 10,000 nodes
-**Memory Usage**: Confirm cache stays under 1 MB
-
-### 9.3 Visual Tests
-
-**Smoothness**: Manually scrub and verify no stuttering
-**Fade Timing**: Check appearing/disappearing nodes fade at correct rate
-**Color Accuracy**: Verify mid-transition colors look correct
-
-## 10. Edge Cases & Failure Modes
-
-### 10.1 Missing Layout Data
-
-**Scenario**: User scrubs to position where next layout isn't ready
-
-**Behavior**: Use current position only, no interpolation
-```
+**Behavior**: Use current position only (no interpolation)
+```typescript
+const nextPos = nextLayout?.nodes.get(nodeId);
 if (!nextPos) {
+    // No interpolation, show current position
     return { x: currentPos.x, y: currentPos.y, opacity: 1.0 };
 }
 ```
 
-**User Experience**: Position doesn't interpolate (snaps), but view still renders.
+**User Experience**: Position snaps instead of interpolating (acceptable degradation).
 
-### 10.2 Mismatched Visual States
+### 11.2 Missing Visual State
 
-**Scenario**: Visual states are computed but layout is missing
+**Scenario**: Visual state not computed for some reason
 
-**Behavior**: Render with default layout or last known layout
-
-**Prevention**: Visual states are cheap to compute, so this is rare.
-
-### 10.3 Cache Overflow
-
-**Scenario**: Cache grows beyond expected 500 entries (shouldn't happen)
-
-**Mitigation**: Implement LRU eviction at 1,000 entries
+**Fallback**: Use Default style class
+```typescript
+const styleClass = visualState?.styleClass ?? NodeStyleClass.Default;
 ```
-if (cache.size > 1000) {
-    evictLRU();
+
+## 12. Testing Strategy (Minimal)
+
+### 12.1 Essential Tests Only
+
+**Unit Tests** (important - these are pure functions):
+- Position interpolation math (standard, appearing, disappearing cases)
+- Progress normalization (floor, modulo)
+- Opacity calculations
+
+**Manual Testing** (UI behavior - not worth automating):
+- Scrub timeline and verify smoothness
+- Check appearing/disappearing nodes fade correctly
+- Verify colors look reasonable at mid-transitions
+
+**Performance Testing** (if issues arise):
+- Measure frame rate during scrubbing with large graphs
+- Profile to identify bottlenecks (only if <30fps)
+
+**Skip**:
+- UI testing frameworks (too much overhead)
+- Visual regression tests (not worth the maintenance)
+- Exhaustive edge case testing (manual spot-checks sufficient)
+
+## 13. Future Enhancements
+
+### 13.1 Non-Linear Easing (Optional Polish)
+
+Replace linear interpolation with easing functions:
+```typescript
+progress = easeInOutCubic(progress);
+```
+
+**Benefit**: More natural-feeling motion (ease in/out)
+**Cost**: One function call per interpolation
+**Priority**: Low (linear is fine)
+
+### 13.2 Reduced Motion Support
+
+Respect user's motion preferences:
+```typescript
+const prefersReducedMotion = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+if (prefersReducedMotion) {
+    // Snap to integer positions, skip interpolation
+    timelinePosition.set(Math.round(position));
 }
 ```
 
-**Rationale**: Failsafe against unexpected cache growth.
+**Benefit**: Accessibility compliance
+**Priority**: Medium (good practice)
 
-## 11. Future Enhancements
-
-### 11.1 Non-Linear Easing
-
-Replace linear interpolation with easing functions:
-```
-progress = easeInOutCubic(progress)
-```
-
-**Benefit**: More natural-feeling motion (accelerate/decelerate).
-
-### 11.2 Anticipatory Caching
-
-Predict user's next scrub direction and pre-cache nearby transitions:
-```
-If scrubbing right, pre-cache transitions at position + 0.25, + 0.5, + 0.75
-```
-
-**Benefit**: Guaranteed cache hits during continuous scrubbing.
-
-### 11.3 Interpolation Quality Levels
-
-User-configurable quality:
-- **Performance**: Snap positions, interpolate colors only
-- **Balanced**: Interpolate positions + colors
-- **Quality**: Add easing + anticipatory caching
-
-## 12. Relationship to Other Specs
+## 14. Relationship to Other Specs
 
 - **ANIMATION.md**: Interpolation is Phase 3 of the animation system
 - **VISUAL_STATES.md**: Interpolation operates on visual state enums
 - **LAYOUT.md**: Interpolation requires precomputed layouts
-- **UI.md**: Components consume interpolated styles and positions
+- **UI.md**: Components implement local interpolation logic

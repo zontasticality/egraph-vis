@@ -301,25 +301,26 @@ function updateGraphView(data) {
 }
 ```
 
-## 9. Testing Strategy
+## 9. Testing Strategy (Minimal)
 
-### 9.1 Unit Tests
+### 9.1 Essential Unit Tests
 
-- **Layout Manager State**: Verify tracking of pending/completed/failed layouts
-- **Fallback Logic**: Test behavior when layouts aren't ready
-- **Cache Hit Rate**: Confirm layouts are reused, not recomputed
+Test the layout manager's pure logic (not UI):
+- Verify tracking of pending/completed layouts
+- Test fallback behavior when layouts aren't ready
 
-### 9.2 Performance Tests
+### 9.2 Performance Measurement (If Needed)
 
-- **Time to First Layout**: Measure blocking time for various graph sizes
-- **Progressive Throughput**: Measure layouts computed per second in background
-- **Memory Growth**: Verify memory usage stays within budget
+Only if performance issues arise:
+- Measure time to first layout for various graph sizes
+- Verify memory usage stays within budget
 
-### 9.3 Visual Tests
+### 9.3 Manual Testing
 
-- **Interpolation Smoothness**: Manually verify scrubbing shows smooth transitions
-- **Node Stability**: Check that nodes don't jump between similar snapshots
-- **Fallback Behavior**: Confirm graceful degradation when layouts aren't ready
+- Scrub timeline and verify smoothness (does it feel good?)
+- Check fallback behavior (what happens when layout isn't ready?)
+
+**Skip**: UI automation, visual regression tests, exhaustive edge cases
 
 ## 10. Future Optimizations
 

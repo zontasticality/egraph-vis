@@ -32,8 +32,8 @@ The animation system consists of four coordinated layers:
                       ↓
 ┌─────────────────────────────────────────────────────┐
 │  3. INTERPOLATION (see INTERPOLATION.md)            │
-│     Compute blended states between snapshots        │
-│     Cache by (styleClass, styleClass, progress)     │
+│     Compute blended states in components (local)    │
+│     CSS color-mix for GPU-accelerated colors        │
 │     Handle node appearance/disappearance with fade  │
 └─────────────────────────────────────────────────────┘
                       ↓
@@ -136,12 +136,14 @@ The scrubbing slider operates on fractional values:
 | Release Slider (mid-transition) | Keep float value | None (hold interpolated state) |
 | Jump to Phase | Set to integer marker | Instant |
 
-### 4.3 Disabled Interactions During Scrubbing
+### 4.3 Interactions During Scrubbing
 
-While `isScrubbing === true`:
-- **Disabled**: Node selection, hover effects, edge highlighting
-- **Enabled**: Pan, zoom, slider dragging
-- **Reason**: Selection during interpolation is ambiguous and degrades performance
+All interactions remain enabled during scrubbing:
+- **Node selection**: Works normally (click to select)
+- **Pan and zoom**: Fully functional
+- **Slider dragging**: Obviously enabled
+
+**Optional Performance Optimization**: If profiling shows hover effects impact frame rate, they can be disabled during scrubbing using the `isScrubbing` flag. This is **not** a requirement - only optimize if needed.
 
 ## 5. Precomputation Strategy
 
@@ -186,6 +188,8 @@ Target constraints for 10,000 nodes × 100 snapshots:
 | Layout Positions | 80 KB | 8 MB |
 | Existing Snapshot Data | 100 KB | 10 MB |
 | **Total** | **~350 KB** | **~35 MB** |
+
+**Interpolation Overhead**: Negligible (~0 MB) - computed locally in components with no caching
 
 **Headroom**: Target stays under 50 MB to support browsers with 100+ MB available per tab.
 

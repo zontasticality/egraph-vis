@@ -30,13 +30,13 @@ Instead of computing visual appearance on-the-fly during scrubbing, we precomput
 - **Layout Positions**: Run ELK layout for all snapshots in advance
 - **Style Definitions**: Define colors/borders once, reuse for all nodes
 
-### Intelligent Caching
+### Simple Interpolation
 
-**Problem**: Interpolating 10,000 nodes = too slow
-**Solution**: Cache by style transition, not by node
-- Only ~500 unique transitions (5 classes × 5 classes × 20 progress steps)
-- Nodes with same transition reuse cached result
-- 95%+ cache hit rate
+**Approach**: Local component computation
+- Each component interpolates its own state reactively
+- CSS color-mix for colors (GPU-accelerated)
+- Simple arithmetic for positions
+- Svelte's reactivity handles optimization
 
 ## Architecture Layers
 
@@ -58,7 +58,7 @@ Instead of computing visual appearance on-the-fly during scrubbing, we precomput
 ┌─────────────────────────────────────────────────────────┐
 │ 3. INTERPOLATION (INTERPOLATION.md)                    │
 │    Blend colors, positions, opacity                    │
-│    Cache: ~500 entries (~24 KB)                        │
+│    Local component computation (simple!)               │
 │    Performance: 60fps for 10k nodes                    │
 └─────────────────────────────────────────────────────────┘
                          ↓
@@ -124,19 +124,17 @@ Queue remaining layouts in background
 
 **Trade-off**: Full-fidelity interpolation takes time, but UI never freezes
 
-### 3. Cache by Style Class, Not Node ID
+### 3. Local Component Computation
 
-**Naive**:
+**Approach**:
 ```
-10,000 nodes × 20 progress values = 200,000 cache entries
-```
-
-**Smart**:
-```
-5 classes × 5 classes × 20 progress values = 500 entries
+Each component computes its own interpolated appearance
+Uses Svelte reactive statements (automatic memoization)
+CSS color-mix for colors (GPU-accelerated)
+Simple arithmetic for positions
 ```
 
-**Savings**: 400× reduction in cache size
+**Benefits**: Simple, maintainable, fast enough (2-3ms per frame)
 
 ### 4. CSS color-mix for GPU Acceleration
 
@@ -162,7 +160,6 @@ GPU-accelerated by browser
 |-----------|--------|
 | Visual States | 17 MB |
 | Layout Positions | 8 MB |
-| Interpolation Cache | 24 KB |
 | **Total Overhead** | **~25 MB** |
 
 **Context**: Modern browsers allocate 100+ MB per tab. 25 MB is acceptable.
@@ -249,27 +246,27 @@ See INTERPOLATION.md Section 4.2 for browser compatibility.
 **A**: System degrades gracefully:
 - No visual states → use default styles
 - No layout → show last known layout or recompute on-demand
-- No cache → slower interpolation but still functional
+- Components always work (interpolation is simple local computation)
 
-## Testing Strategy
+## Testing Strategy (Keep It Simple)
 
-### Unit Tests
-- Visual classification logic (priority rules)
-- Interpolation math (lerp, quantization)
-- Cache key generation
-- Fallback handling
+### Essential Unit Tests
+Test pure logic only (not UI):
+- Visual classification (priority rules)
+- Position interpolation math
+- Fallback behavior
 
-### Performance Tests
-- Memory usage under budget
-- Frame rate during scrubbing (60fps target)
-- Cache hit rate (>95% expected)
-- Layout computation time by graph size
+### Manual Testing
+- Scrub timeline - does it feel smooth?
+- Check colors look reasonable at mid-transitions
+- Verify nodes fade in/out correctly
 
-### Visual Tests
-- Scrubbing smoothness (manual verification)
-- Color accuracy at mid-transitions
-- Node fade-in/out timing
-- Fallback behavior when layouts not ready
+### Performance Measurement (If Needed)
+Only if performance issues arise:
+- Measure frame rate during scrubbing
+- Check memory usage
+
+**Skip**: UI test frameworks, visual regression, exhaustive edge cases
 
 ## Next Steps
 
