@@ -39,6 +39,34 @@ export class LayoutManager {
     }
 
     /**
+     * Update layout configuration and trigger re-computation
+     */
+    async updateConfig(newConfig: LayoutConfig, timeline: EGraphTimeline): Promise<void> {
+        console.log('[LayoutManager] Updating config:', newConfig);
+        this.config = newConfig;
+
+        // Clear existing layouts
+        this.clear();
+
+        // Reset state layouts to null to trigger loading state in UI
+        for (let i = 0; i < timeline.states.length; i++) {
+            timeline.states[i] = create(timeline.states[i], draft => {
+                draft.layout = undefined;
+            });
+        }
+
+        // Recompute all
+        await this.precomputeAll(timeline);
+    }
+
+    /**
+     * Get current configuration
+     */
+    getConfig(): LayoutConfig {
+        return this.config;
+    }
+
+    /**
      * Compute layouts for all snapshots. First layout is synchronous, rest are progressive.
      * Returns immediately after first layout is complete.
      */

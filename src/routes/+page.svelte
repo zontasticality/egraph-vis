@@ -1,12 +1,18 @@
 <script lang="ts">
     import Controller from "$lib/components/Controller.svelte";
-    import { loadPreset } from "$lib/stores/timelineStore";
+    import {
+        loadPreset,
+        timeline as timelineStore,
+    } from "$lib/stores/timelineStore";
     import { onMount } from "svelte";
     import { PaneGroup, Pane, PaneResizer } from "paneforge";
     import { PRESETS } from "$lib/presets";
 
     import GraphPane from "$lib/components/graph_pane/GraphPane.svelte";
     import StatePane from "$lib/components/state_pane/StatePane.svelte";
+    import LayoutSettings from "$lib/components/LayoutSettings.svelte";
+    import { layoutManager } from "$lib/engine/layout";
+    import type { LayoutConfig } from "$lib/engine/layoutConfig";
 
     // Full example from the paper
     const demoPreset = {
@@ -79,6 +85,11 @@
         reload();
     }
 
+    async function handleLayoutConfigChange(e: CustomEvent<LayoutConfig>) {
+        if (!$timelineStore) return;
+        await layoutManager.updateConfig(e.detail, $timelineStore);
+    }
+
     onMount(() => {
         const saved = localStorage.getItem("egraph-vis-layout");
         if (saved) {
@@ -128,7 +139,7 @@
         </div>
 
         <div class="header-section right-controls">
-            <!-- Placeholder for other controls -->
+            <LayoutSettings on:change={handleLayoutConfigChange} />
         </div>
     </header>
 

@@ -433,6 +433,13 @@
 </script>
 
 <div class="graph-container">
+	{#if !$currentState?.layout}
+		<div class="loading-overlay">
+			<div class="spinner"></div>
+			<div class="loading-text">Computing Layout...</div>
+		</div>
+	{/if}
+
 	<SvelteFlow
 		nodes={$nodes}
 		edges={$edges}
@@ -456,5 +463,45 @@
 		position: relative;
 		width: 100%;
 		height: 100%;
+	}
+
+	.loading-overlay {
+		position: absolute;
+		top: 0;
+		left: 0;
+		width: 100%;
+		height: 100%;
+		background: rgba(255, 255, 255, 0.8);
+		display: flex;
+		flex-direction: column;
+		align-items: center;
+		justify-content: center;
+		z-index: 50;
+		backdrop-filter: blur(2px);
+	}
+
+	.spinner {
+		width: 40px;
+		height: 40px;
+		border: 4px solid #f3f3f3;
+		border-top: 4px solid #3b82f6;
+		border-radius: 50%;
+		animation: spin 1s linear infinite;
+		margin-bottom: 1rem;
+	}
+
+	.loading-text {
+		color: #374151;
+		font-weight: 500;
+		font-size: 0.9rem;
+	}
+
+	@keyframes spin {
+		0% {
+			transform: rotate(0deg);
+		}
+		100% {
+			transform: rotate(360deg);
+		}
 	}
 </style>
