@@ -417,10 +417,9 @@ describe('TimelineEngine', () => {
             const firstWriteIndex1 = timeline1.states.findIndex(s => s.phase === 'write');
             const firstIterationStates1 = timeline1.states.slice(0, firstWriteIndex1);
             const readBatchCount1 = firstIterationStates1.filter(s => s.phase === 'read-batch').length;
-            const readCount1 = firstIterationStates1.filter(s => s.phase === 'read').length;
             const allWriteCount1 = timeline1.states.filter(s => s.phase === 'write').length;
 
-            console.log(`Parallelism=1: read-batch=${readBatchCount1}, read=${readCount1}, write=${allWriteCount1}`);
+            console.log(`Parallelism=1: read-batch=${readBatchCount1}, write=${allWriteCount1}`);
 
             // Test with parallelism=5
             const engine2 = new TimelineEngine();
@@ -434,10 +433,9 @@ describe('TimelineEngine', () => {
             const firstWriteIndex5 = timeline5.states.findIndex(s => s.phase === 'write');
             const firstIterationStates5 = timeline5.states.slice(0, firstWriteIndex5);
             const readBatchCount5 = firstIterationStates5.filter(s => s.phase === 'read-batch').length;
-            const readCount5 = firstIterationStates5.filter(s => s.phase === 'read').length;
             const allWriteCount5 = timeline5.states.filter(s => s.phase === 'write').length;
 
-            console.log(`Parallelism=5: read-batch=${readBatchCount5}, read=${readCount5}, write=${allWriteCount5}`);
+            console.log(`Parallelism=5: read-batch=${readBatchCount5}, write=${allWriteCount5}`);
 
             // With parallelism=1, we should process all e-classes sequentially
             // Each rule is checked against all e-classes, yielding after each e-class
@@ -448,10 +446,6 @@ describe('TimelineEngine', () => {
 
             // The key invariant: parallelism should REDUCE the number of read-batch snapshots
             expect(readBatchCount5).toBeLessThan(readBatchCount1);
-
-            // Both should have exactly 1 final 'read' snapshot
-            expect(readCount1).toBe(1);
-            expect(readCount5).toBe(1);
 
             // Both should have the same total number of write snapshots (4 matches in iteration 0: a,b,d,e → c)
             // Note: There may be more writes in subsequent iterations
@@ -594,28 +588,27 @@ describe('TimelineEngine', () => {
             // Check phase sequence is correct
             const phases = timeline.states.map(s => s.phase);
 
-            // Expected sequence: init, read-batch..., read, write..., compact..., repair..., (repeat)
+            // Expected sequence: init, read-batch..., write..., compact..., repair..., (repeat)
             expect(phases[0]).toBe('init');
             expect(phases[1]).toBe('read-batch');
 
-            // Find first read phase (after all read-batch phases)
-            const firstReadIndex = phases.indexOf('read');
-            expect(firstReadIndex).toBeGreaterThan(0);
+            // After read-batch phases should come write (no intermediate 'read' phase)
+            const lastReadBatchIndex = phases.lastIndexOf('read-batch', phases.indexOf('write'));
+            expect(lastReadBatchIndex).toBeGreaterThan(0);
 
-            // After read should come write
-            const firstWriteIndex = phases.indexOf('write', firstReadIndex);
-            expect(firstWriteIndex).toBeGreaterThan(firstReadIndex);
+            const firstWriteIndex = phases.indexOf('write');
+            expect(firstWriteIndex).toBeGreaterThan(lastReadBatchIndex);
 
             // Check visual states structure
             console.log('\nVisual state structure check:');
-            const readBatchState = timeline.states.find(s => s.phase === 'read-batch');
-            const readState = timeline.states.find(s => s.phase === 'read');
+            const readBatchStates = timeline.states.filter(s => s.phase === 'read-batch');
+            const lastReadBatchState = readBatchStates[readBatchStates.length - 1];
             const writeState = timeline.states.find(s => s.phase === 'write');
 
-            if (readBatchState?.visualStates) {
-                const nodeMap = readBatchState.visualStates.nodes;
-                const eclassMap = readBatchState.visualStates.eclasses;
-                console.log(`read-batch: ${nodeMap.size} nodes, ${eclassMap.size} eclasses`);
+            if (readBatchStates.length > 0 && readBatchStates[0]?.visualStates) {
+                const nodeMap = readBatchStates[0].visualStates.nodes;
+                const eclassMap = readBatchStates[0].visualStates.eclasses;
+                console.log(`First read-batch: ${nodeMap.size} nodes, ${eclassMap.size} eclasses`);
 
                 // Count node states
                 const nodeStateCounts = new Map<string, number>();
@@ -626,9 +619,9 @@ describe('TimelineEngine', () => {
                 console.log('  Node styleClass distribution:', Object.fromEntries(nodeStateCounts));
             }
 
-            if (readState?.visualStates) {
-                const nodeMap = readState.visualStates.nodes;
-                console.log(`read: ${nodeMap.size} nodes`);
+            if (lastReadBatchState?.visualStates) {
+                const nodeMap = lastReadBatchState.visualStates.nodes;
+                console.log(`Last read-batch: ${nodeMap.size} nodes (complete writelist)`);
                 const nodeStateCounts = new Map<string, number>();
                 nodeMap.forEach(ns => {
                     const count = nodeStateCounts.get(ns.styleClass.toString()) || 0;
@@ -649,9 +642,22 @@ describe('TimelineEngine', () => {
             }
 
             // Verify that visual states are populated correctly
-            expect(readBatchState?.visualStates?.nodes.size).toBeGreaterThan(0);
-            expect(readState?.visualStates?.nodes.size).toBeGreaterThan(0);
+            expect(readBatchStates.length).toBeGreaterThan(0);
+            expect(lastReadBatchState?.visualStates?.nodes.size).toBeGreaterThan(0);
             expect(writeState?.visualStates?.nodes.size).toBeGreaterThan(0);
+
+            // Investigate the write phases at the end
+            console.log('\nInvestigating final write phases:');
+            const finalWritePhases = timeline.states.filter(s => s.phase === 'write' && s.stepIndex >= 20);
+            console.log(`Found ${finalWritePhases.length} write phases after stepIndex 20`);
+
+            finalWritePhases.forEach((state, i) => {
+                const diffs = state.metadata.diffs || [];
+                const merges = diffs.filter(d => d.type === 'merge');
+                const rewrites = diffs.filter(d => d.type === 'rewrite');
+                const writelist = state.metadata.writelist;
+                console.log(`  Write ${state.stepIndex}: ${merges.length} merges, ${rewrites.length} rewrites, writelist=${writelist?.entries.length || 0}`);
+            });
         });
 
         it('should process all rules against e-class batches, not batch per rule', async () => {

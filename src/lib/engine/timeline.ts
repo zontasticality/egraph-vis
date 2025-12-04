@@ -105,11 +105,8 @@ export class TimelineEngine implements EGraphEngine {
                     });
                 }
 
-                // Final read snapshot with complete writelist
-                this.emitSnapshot('read', allMatches, undefined, {
-                    writelist: this.cloneWritelist(writelist),
-                    currentMatchingNodes: []
-                });
+                // No need for a separate 'read' snapshot - the last read-batch already shows
+                // the complete writelist and all matches
 
                 if (writelist.entries.length === 0) {
                     this.timeline.haltedReason = 'saturated';
@@ -138,7 +135,10 @@ export class TimelineEngine implements EGraphEngine {
                     const target = this.runtime.find(entry.targetClass);
                     const actualNewId = this.runtime.find(newId);
 
-                    // Deduplication: skip if already equal
+                    // Update writelist consumption pointer
+                    writelist.nextIndex = i + 1;
+
+                    // Deduplication: skip if already equal (no snapshot needed)
                     if (target !== actualNewId) {
                         this.runtime.merge(target, actualNewId, 'deferred', this.rng);
                         hasChanges = true;
@@ -151,17 +151,14 @@ export class TimelineEngine implements EGraphEngine {
                             createdId: actualNewId,
                             mergedInto: this.runtime.find(target)
                         });
+
+                        // Emit snapshot showing write progress (only when actual work is done)
+                        // IMPORTANT: Pass allMatches to preserve LHS highlighting
+                        this.emitSnapshot('write', allMatches, undefined, {
+                            writelist: this.cloneWritelist(writelist),
+                            currentMatchingNodes: []
+                        });
                     }
-
-                    // Update writelist consumption pointer
-                    writelist.nextIndex = i + 1;
-
-                    // Emit snapshot showing write progress
-                    // IMPORTANT: Pass allMatches to preserve LHS highlighting
-                    this.emitSnapshot('write', allMatches, undefined, {
-                        writelist: this.cloneWritelist(writelist),
-                        currentMatchingNodes: []
-                    });
                 }
 
                 // If no actual changes were made (all deduplicated), we're saturated
