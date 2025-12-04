@@ -38,6 +38,8 @@
     import ErrorModal from "$lib/components/editors/ErrorModal.svelte";
 
     let isDeferred = true;
+    let parallelism = 2; // Default parallelism for deferred mode
+    let showImplDropdown = false; // For custom dropdown
     let paneLayout = [60, 40]; // Default split
     let ready = false;
     let selectedPresetId = "paper-example";
@@ -70,6 +72,7 @@
 
         loadPreset(preset, {
             implementation: isDeferred ? "deferred" : "naive",
+            parallelism: isDeferred ? parallelism : 1,
         });
     }
 
@@ -116,6 +119,25 @@
     function toggleImplementation() {
         isDeferred = !isDeferred;
         reload();
+    }
+
+    function handleParallelismSelect(value: number) {
+        parallelism = value;
+        showImplDropdown = false;
+        reload();
+    }
+
+    function toggleParallelismDropdown(event: MouseEvent) {
+        event.stopPropagation();
+        showImplDropdown = !showImplDropdown;
+    }
+
+    // Close dropdown when clicking outside
+    function handleOutsideClick(event: MouseEvent) {
+        const target = event.target as HTMLElement;
+        if (!target.closest('.deferred-dropdown')) {
+            showImplDropdown = false;
+        }
     }
 
     async function handleLayoutConfigChange(e: CustomEvent<LayoutConfig>) {
@@ -237,6 +259,12 @@
         }
         ready = true;
         reload();
+
+        // Add global click listener for closing dropdown
+        document.addEventListener('click', handleOutsideClick);
+        return () => {
+            document.removeEventListener('click', handleOutsideClick);
+        };
     });
 
     // Live update when editing - WITH SAFEGUARDS
@@ -244,6 +272,7 @@
     $: if ($isEditing && $draftPreset) {
         loadPreset($draftPreset, {
             implementation: isDeferred ? "deferred" : "naive",
+            parallelism: isDeferred ? parallelism : 1,
             iterationCap: 100, // Safety limit to prevent freezing
         });
     }
@@ -364,9 +393,64 @@
                 >
                     <span class="toggle-thumb"></span>
                 </button>
-                <span class="toggle-label {isDeferred ? 'active' : ''}"
-                    >Deferred</span
-                >
+                <div class="deferred-dropdown">
+                    <button
+                        class="toggle-label {isDeferred ? 'active' : ''} deferred-button"
+                        on:click={toggleParallelismDropdown}
+                        aria-label="Select Deferred Parallelism"
+                    >
+                        Deferred x{parallelism}
+                        <svg
+                            class="parallelism-arrow"
+                            xmlns="http://www.w3.org/2000/svg"
+                            width="10"
+                            height="10"
+                            viewBox="0 0 24 24"
+                            fill="none"
+                            stroke="currentColor"
+                            stroke-width="2"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        >
+                            <polyline points="6 9 12 15 18 9"></polyline>
+                        </svg>
+                    </button>
+
+                    {#if showImplDropdown && isDeferred}
+                        <div class="parallelism-menu">
+                            <button
+                                class="parallelism-option {parallelism === 2 ? 'active' : ''}"
+                                on:click={() => handleParallelismSelect(2)}
+                            >
+                                x2
+                            </button>
+                            <button
+                                class="parallelism-option {parallelism === 4 ? 'active' : ''}"
+                                on:click={() => handleParallelismSelect(4)}
+                            >
+                                x4
+                            </button>
+                            <button
+                                class="parallelism-option {parallelism === 8 ? 'active' : ''}"
+                                on:click={() => handleParallelismSelect(8)}
+                            >
+                                x8
+                            </button>
+                            <button
+                                class="parallelism-option {parallelism === 16 ? 'active' : ''}"
+                                on:click={() => handleParallelismSelect(16)}
+                            >
+                                x16
+                            </button>
+                            <button
+                                class="parallelism-option {parallelism === 32 ? 'active' : ''}"
+                                on:click={() => handleParallelismSelect(32)}
+                            >
+                                x32
+                            </button>
+                        </div>
+                    {/if}
+                </div>
             </div>
         </div>
 
@@ -647,6 +731,10 @@
         color: #6b7280;
     }
 
+    .toggle-label {
+        transition: color 0.2s;
+    }
+
     .toggle-label.active {
         color: #111827;
     }
@@ -686,6 +774,93 @@
     .toggle-switch:focus {
         outline: none;
         box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+    }
+
+    /* Deferred Dropdown */
+    .deferred-dropdown {
+        position: relative;
+    }
+
+    .deferred-button {
+        display: flex;
+        align-items: center;
+        gap: 0.25rem;
+        background: none;
+        border: none;
+        cursor: pointer;
+        padding: 0.25rem 0.4rem;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+
+    .deferred-button:hover {
+        background: #f3f4f6;
+    }
+
+    .deferred-button:focus {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
+    }
+
+    .parallelism-arrow {
+        opacity: 0.5;
+        transition: opacity 0.2s;
+    }
+
+    .deferred-button:hover .parallelism-arrow {
+        opacity: 0.8;
+    }
+
+    .parallelism-menu {
+        position: absolute;
+        top: calc(100% + 0.5rem);
+        left: 50%;
+        transform: translateX(-50%);
+        background: white;
+        border: 1px solid #e5e7eb;
+        border-radius: 8px;
+        box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.1),
+            0 8px 10px -6px rgba(0, 0, 0, 0.1);
+        padding: 0.5rem;
+        min-width: 80px;
+        z-index: 1000;
+        animation: dropdown-fade-in 0.15s ease-out;
+    }
+
+    @keyframes dropdown-fade-in {
+        from {
+            opacity: 0;
+            transform: translateX(-50%) translateY(-4px);
+        }
+        to {
+            opacity: 1;
+            transform: translateX(-50%) translateY(0);
+        }
+    }
+
+    .parallelism-option {
+        display: block;
+        width: 100%;
+        padding: 0.4rem 0.6rem;
+        background: none;
+        border: none;
+        text-align: center;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #374151;
+        cursor: pointer;
+        border-radius: 4px;
+        transition: all 0.15s;
+    }
+
+    .parallelism-option:hover {
+        background: #f3f4f6;
+        color: #111827;
+    }
+
+    .parallelism-option.active {
+        background: #dbeafe;
+        color: #2563eb;
     }
 
     .main-content {

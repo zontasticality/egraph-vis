@@ -130,6 +130,7 @@ export interface EngineOptions {
     debugInvariants?: boolean;
     maxNodes?: number;
     seed?: number; // Seed for random union-find decisions
+    parallelism?: number; // Number of parallel operations (for deferred mode): 2, 4, 8, 16, 32
 }
 
 export interface EGraphEngine {

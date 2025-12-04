@@ -128,6 +128,41 @@ export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Ma
     return matches;
 }
 
+// Generator version that yields periodically to allow snapshots during long searches
+// Simulates parallel search by batching e-classes together
+export function* collectMatchesGen(
+    runtime: EGraphRuntime,
+    rules: RewriteRule[],
+    parallelism: number = 1
+): Generator<Match[]> {
+    const allMatches: Match[] = [];
+    let processedCount = 0;
+    const eclassArray = Array.from(runtime.eclasses);
+    const totalEClasses = eclassArray.length;
+
+    for (const rule of rules) {
+        for (const [id, eclass] of eclassArray) {
+            const found = matchPattern(runtime, rule.lhs, id);
+            for (const substitution of found) {
+                allMatches.push({ rule, eclassId: id, substitution });
+            }
+
+            processedCount++;
+
+            // Yield after processing 'parallelism' e-classes (simulating parallel batch)
+            if (processedCount >= parallelism) {
+                yield allMatches.slice(); // Return current matches
+                processedCount = 0;
+            }
+        }
+    }
+
+    // Yield final batch if any remaining
+    if (processedCount > 0 || allMatches.length > 0) {
+        yield allMatches;
+    }
+}
+
 function matchPattern(runtime: EGraphRuntime, pattern: Pattern | number, eclassId: ENodeId): Map<string, ENodeId>[] {
     // 1. Concrete ID Match
     if (isLiteralPattern(pattern)) {
@@ -259,7 +294,7 @@ export function* applyMatchesGen(
             mergedInto: runtime.find(target)
         });
 
-        // Yield after each merge (this allows a snapshot to be taken)
+        // Yield after each merge (no batching - write phase is sequential)
         yield { match, phase: 'apply' };
 
         // In naive mode, rebuild will be called separately by TimelineEngine
@@ -290,13 +325,12 @@ export function* rebuildGen(runtime: EGraphRuntime): Generator<{ phase: 'compact
             }
             runtime.eclasses.delete(id);
 
-            // Yield after each compaction
-            // Yield the canonicalId (survivor) so we can highlight the class that absorbed the other
+            // Yield after each compaction (no batching - rebuild is sequential)
             yield { phase: 'compact', eclassId: canonicalId };
         }
     }
 
-    // 2. Congruence Repair (One item at a time for granular visualization)
+    // 2. Congruence Repair (Sequential - deduplication happens naturally via worklist)
     while (runtime.worklist.size > 0) {
         // Take just one item from the worklist
         const eclassId = runtime.worklist.values().next().value;

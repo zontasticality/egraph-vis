@@ -1,6 +1,6 @@
 import { create } from 'mutative';
 import { EGraphRuntime, SeededRandom } from './runtime';
-import { rebuild, collectMatches, applyMatches, applyMatchesGen, rebuildGen } from './algorithms';
+import { rebuild, collectMatches, collectMatchesGen, applyMatches, applyMatchesGen, rebuildGen } from './algorithms';
 import { computeVisualStates } from './visual';
 import { layoutManager } from './layout';
 import type {
@@ -54,24 +54,37 @@ export class TimelineEngine implements EGraphEngine {
         const cap = this.options.iterationCap ?? 100;
 
         while (iteration < cap) {
-            // 1. Read Phase
-            const matches = collectMatches(this.runtime, this.getRewrites());
-            this.emitSnapshot('read', matches);
+            // 1. Read Phase (PARALLELIZABLE - search for matches)
+            // Higher parallelism = simulate more parallel search threads = fewer snapshots
+            let allMatches: Match[] = [];
+            const parallelism = this.options.parallelism ?? 1;
 
-            if (matches.length === 0) {
+            if (this.options.implementation === 'deferred' && parallelism > 1) {
+                // Use generator to show intermediate search progress
+                const matchGen = collectMatchesGen(this.runtime, this.getRewrites(), parallelism);
+                for (const batchMatches of matchGen) {
+                    allMatches = batchMatches;
+                    this.emitSnapshot('read', allMatches);
+                }
+            } else {
+                // Sequential search (naive mode or parallelism = 1)
+                allMatches = collectMatches(this.runtime, this.getRewrites());
+                this.emitSnapshot('read', allMatches);
+            }
+
+            if (allMatches.length === 0) {
                 this.timeline.haltedReason = 'saturated';
                 break;
             }
 
-            // 2. Write Phase (Fine-Grained)
-            // In deferred mode, we apply all matches, then rebuild once
-            // In naive mode, applyMatchesGen will rebuild after each rewrite
-            const applyGen = applyMatchesGen(this.runtime, matches, this.options.implementation, this.rng);
+            // 2. Write Phase (SEQUENTIAL - mutates shared data structures)
+            // Apply all matches sequentially
+            const applyGen = applyMatchesGen(this.runtime, allMatches, this.options.implementation, this.rng);
 
             let hasChanges = false;
             for (const _step of applyGen) {
                 hasChanges = true;
-                this.emitSnapshot('write', matches);
+                this.emitSnapshot('write', allMatches);
 
                 // In naive mode, rebuild after each rewrite
                 if (this.options.implementation === 'naive') {
@@ -89,14 +102,15 @@ export class TimelineEngine implements EGraphEngine {
                 break;
             }
 
-            // 3. Rebuild Phase (Fine-Grained, only for deferred mode)
+            // 3. Rebuild Phase (SEQUENTIAL - only for deferred mode)
+            // Efficiency comes from amortization (once per iteration) and deduplication (worklist)
             // Naive mode already rebuilt during applyMatchesGen
             if (this.options.implementation === 'deferred') {
                 const rebuildIterator = rebuildGen(this.runtime);
                 for (const step of rebuildIterator) {
                     // Emit snapshot with the specific phase (compact or repair)
                     // Pass the active e-class ID to highlight just that class
-                    this.emitSnapshot(step.phase, matches, step.eclassId);
+                    this.emitSnapshot(step.phase, allMatches, step.eclassId);
                 }
             }
 
