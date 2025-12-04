@@ -268,9 +268,64 @@
 			ec.nodes.forEach((n) => allCurrentNodeIds.add(n.id)),
 		);
 
+		// When a union-find merge picks a newly created set as the canonical winner,
+		// anchor that new set's animation to an existing set from the current layout
+		// so the container doesn't spawn stationary while the old set moves toward it.
+		const setSpawnAnchors = new Map<number, number>();
+		if (state.implementation === "deferred" && nextState?.layout) {
+			for (const entry of nextState.unionFind) {
+				const nextCanonical = entry.canonical;
+				const targetSetId = `set-${nextCanonical}`;
+
+				// If the canonical set already exists in the current layout, no anchor needed.
+				if (state.layout.groups.has(targetSetId)) continue;
+
+				const currentCanonical = canonicalMapCurrent.get(entry.id);
+				if (
+					currentCanonical === undefined ||
+					currentCanonical === nextCanonical
+				) {
+					continue;
+				}
+
+				const anchorSetId = `set-${currentCanonical}`;
+				if (!state.layout.groups.has(anchorSetId)) continue;
+
+				if (!setSpawnAnchors.has(nextCanonical)) {
+					setSpawnAnchors.set(nextCanonical, currentCanonical);
+				}
+			}
+		}
+
 		const interpolateGroupPosition = (id: string) => {
 			const currentPos = state.layout!.groups.get(id);
 			const nextPos = nextState?.layout?.groups.get(id);
+
+			if (
+				shouldInterpolate &&
+				!currentPos &&
+				nextPos &&
+				state.implementation === "deferred" &&
+				id.startsWith("set-")
+			) {
+				const canonicalId = parseInt(id.substring(4));
+				const anchorId = setSpawnAnchors.get(canonicalId);
+				if (anchorId !== undefined) {
+					const anchorPos = state.layout!.groups.get(
+						`set-${anchorId}`,
+					);
+					if (anchorPos) {
+						return {
+							x:
+								anchorPos.x +
+								(nextPos.x - anchorPos.x) * easedProgress,
+							y:
+								anchorPos.y +
+								(nextPos.y - anchorPos.y) * easedProgress,
+						};
+					}
+				}
+			}
 
 			if (shouldInterpolate && currentPos && nextPos) {
 				return {
@@ -290,6 +345,34 @@
 		const interpolateGroupDimensions = (id: string) => {
 			const currentDims = state.layout!.groups.get(id);
 			const nextDims = nextState?.layout?.groups.get(id);
+
+			if (
+				shouldInterpolate &&
+				!currentDims &&
+				nextDims &&
+				state.implementation === "deferred" &&
+				id.startsWith("set-")
+			) {
+				const canonicalId = parseInt(id.substring(4));
+				const anchorId = setSpawnAnchors.get(canonicalId);
+				if (anchorId !== undefined) {
+					const anchorDims = state.layout!.groups.get(
+						`set-${anchorId}`,
+					);
+					if (anchorDims) {
+						return {
+							width:
+								anchorDims.width +
+								(nextDims.width - anchorDims.width) *
+									easedProgress,
+							height:
+								anchorDims.height +
+								(nextDims.height - anchorDims.height) *
+									easedProgress,
+						};
+					}
+				}
+			}
 
 			if (shouldInterpolate && currentDims && nextDims) {
 				return {
@@ -316,48 +399,52 @@
 			return { width: 100, height: 100 };
 		};
 
-		// Group by canonical IDs across current/next to keep logical classes together.
-		type RenderEntry = {
-			canonicalId: number;
-			currentClasses: typeof state.eclasses;
-			nextClasses: typeof state.eclasses;
-		};
+			// Per-eclass render entries (preserve node-local coords by keeping original parents)
+			const currentEClassMap = new Map<number, typeof state.eclasses[number]>();
+			for (const ec of state.eclasses) {
+				currentEClassMap.set(ec.id, ec);
+			}
 
-		const groupsByCanonical = new Map<number, RenderEntry>();
+			const nextEClassMap = new Map<number, typeof state.eclasses[number]>();
+			if (nextState) {
+				for (const ec of nextState.eclasses) {
+					nextEClassMap.set(ec.id, ec);
+				}
+			}
 
-		const ensureGroup = (canonicalId: number) => {
-			if (!groupsByCanonical.has(canonicalId)) {
-				groupsByCanonical.set(canonicalId, {
-					canonicalId,
-					currentClasses: [],
-					nextClasses: [],
+			const renderIds = new Set<number>([
+				...currentEClassMap.keys(),
+				...nextEClassMap.keys(),
+			]);
+
+			type RenderEntry = {
+				id: number;
+				current?: typeof state.eclasses[number];
+				next?: typeof state.eclasses[number];
+			};
+
+			const renderEntries: RenderEntry[] = [];
+			for (const id of Array.from(renderIds).sort((a, b) => a - b)) {
+				renderEntries.push({
+					id,
+					current: currentEClassMap.get(id),
+					next: nextEClassMap.get(id),
 				});
 			}
-			return groupsByCanonical.get(canonicalId)!;
-		};
 
-		for (const ec of state.eclasses) {
-			const can = canonicalMapCurrent.get(ec.id) ?? ec.id;
-			ensureGroup(can).currentClasses.push(ec);
-		}
-
-		if (nextState) {
-			for (const ec of nextState.eclasses) {
-				const can = canonicalMapNext.get(ec.id) ?? ec.id;
-				ensureGroup(can).nextClasses.push(ec);
-			}
-		}
-
-		const renderEntries = Array.from(groupsByCanonical.values()).sort(
-			(a, b) => a.canonicalId - b.canonicalId,
-		);
-
-		// Render union-find sets (deferred implementation) using union of current/next
-		if (state.implementation === "deferred") {
-			const allSetIds = new Set<number>();
-			for (const entry of renderEntries) {
-				allSetIds.add(entry.canonicalId);
-			}
+			// Render union-find sets (deferred implementation) using union of current/next
+			if (state.implementation === "deferred") {
+				const allSetIds = new Set<number>();
+				for (const entry of renderEntries) {
+					const currCan =
+						entry.current &&
+						(canonicalMapCurrent.get(entry.current.id) ?? entry.current.id);
+					const nextCan =
+						entry.next &&
+						(canonicalMapNext.get(entry.next.id) ?? entry.next.id);
+					if (currCan !== undefined) allSetIds.add(currCan);
+					if (nextCan !== undefined) allSetIds.add(nextCan);
+				}
 
 			for (const canonicalId of Array.from(allSetIds).sort(
 				(a, b) => a - b,
@@ -381,26 +468,24 @@
 			}
 		}
 
-		for (const entry of renderEntries) {
-			const canonicalId = entry.canonicalId;
-			const currentClasses = entry.currentClasses;
-			const nextClasses = entry.nextClasses;
+			for (const entry of renderEntries) {
+				const eclassId = entry.id;
+				const currentEClass = entry.current;
+				const nextEClass = entry.next;
 
-			const currentNodeIds = new Set<number>();
-			currentClasses.forEach((ec) =>
-				ec.nodes.forEach((n) => currentNodeIds.add(n.id)),
-			);
+				const currentNodeIds = new Set<number>(
+					currentEClass?.nodes.map((n) => n.id) ?? [],
+				);
 
-			const nextNodeIds = new Set<number>();
-			nextClasses.forEach((ec) =>
-				ec.nodes.forEach((n) => nextNodeIds.add(n.id)),
-			);
+				const nextNodeIds = new Set<number>(
+					nextEClass?.nodes.map((n) => n.id) ?? [],
+				);
 
-			const existsCurrent = currentClasses.length > 0;
-			const existsNext = nextClasses.length > 0;
-			const hasTrueNewNodes = Array.from(nextNodeIds).some(
-				(id) => !allCurrentNodeIds.has(id),
-			);
+				const existsCurrent = !!currentEClass;
+				const existsNext = !!nextEClass;
+				const hasTrueNewNodes = Array.from(nextNodeIds).some(
+					(id) => !allCurrentNodeIds.has(id),
+				);
 
 			let renderMode:
 				| "normal"
@@ -416,33 +501,33 @@
 				renderMode = "addNodes";
 			}
 
-			const classId = `class-${canonicalId}`;
-			const classPos = interpolateGroupPosition(classId);
-			const classDims = interpolateGroupDimensions(classId);
-			const spawnCenter = {
-				x: classDims.width / 2 - ENODE_LAYOUT.width / 2,
-				y: classDims.height / 2 - ENODE_LAYOUT.height / 2,
-			};
+				const classId = `class-${eclassId}`;
+				const classPos = interpolateGroupPosition(classId);
+				const classDims = interpolateGroupDimensions(classId);
+				const spawnCenter = {
+					x: classDims.width / 2 - ENODE_LAYOUT.width / 2,
+					y: classDims.height / 2 - ENODE_LAYOUT.height / 2,
+				};
 
-			const classVisuals = (() => {
-				const fallbackNext =
-					nextState?.visualStates?.eclasses.get(canonicalId);
-				if (!existsCurrent && fallbackNext) {
-					const style = ECLASS_STYLES[fallbackNext.styleClass];
-					return {
-						color: style.borderColor!,
-						lightColor: style.backgroundColor!,
-						opacity: style.opacity ?? 1,
-					};
-				}
-				return getEClassVisuals(
-					canonicalId,
-					state,
-					nextState,
-					progress,
-					shouldInterpolate,
-				);
-			})();
+				const classVisuals = (() => {
+					const fallbackNext =
+						nextState?.visualStates?.eclasses.get(eclassId);
+					if (!existsCurrent && fallbackNext) {
+						const style = ECLASS_STYLES[fallbackNext.styleClass];
+						return {
+							color: style.borderColor!,
+							lightColor: style.backgroundColor!,
+							opacity: style.opacity ?? 1,
+						};
+					}
+					return getEClassVisuals(
+						eclassId,
+						state,
+						nextState,
+						progress,
+						shouldInterpolate,
+					);
+				})();
 
 			const classOpacity =
 				renderMode === "newClass" && shouldInterpolate
@@ -451,7 +536,11 @@
 
 			const parentSetId =
 				state.implementation === "deferred"
-					? `set-${canonicalId}`
+					? `set-${
+							canonicalMapCurrent.get(eclassId) ??
+							canonicalMapNext.get(eclassId) ??
+							eclassId
+						}`
 					: undefined;
 
 			const nodeIdsForClass = new Set<number>();
@@ -464,53 +553,34 @@
 				currentNodeIds.forEach((id) => nodeIdsForClass.add(id));
 			}
 
-				const eclassId = canonicalId;
+					newNodes.push({
+						id: classId,
+						type: "eclassGroup",
+						position: classPos,
+						parentId: parentSetId,
+						extent: parentSetId ? "parent" : undefined,
+						data: {
+							eclassId: eclassId,
+							color: classVisuals.color,
+							lightColor: classVisuals.lightColor,
+							opacity: classOpacity,
+							isCanonical: true,
+							label: `ID: ${eclassId}`,
+							nodeIds: Array.from(nodeIdsForClass),
+							width: classDims.width,
+							height: classDims.height,
+						},
+						style: `width: ${classDims.width}px; height: ${classDims.height}px; background: transparent; border: none; padding: 0;`,
+						draggable: false,
+					});
 
-				newNodes.push({
-					id: classId,
-					type: "eclassGroup",
-					position: classPos,
-					parentId: parentSetId,
-					extent: parentSetId ? "parent" : undefined,
-				data: {
-					eclassId: eclassId,
-					color: classVisuals.color,
-					lightColor: classVisuals.lightColor,
-					opacity: classOpacity,
-					isCanonical: true,
-					label: `ID: ${canonicalId}`,
-					nodeIds: Array.from(nodeIdsForClass),
-					width: classDims.width,
-					height: classDims.height,
-				},
-				style: `width: ${classDims.width}px; height: ${classDims.height}px; background: transparent; border: none; padding: 0;`,
-				draggable: false,
-			});
-
-			const enodeIdentityColor = getColorForId(canonicalId);
+			const enodeIdentityColor = getColorForId(eclassId);
 
 			for (const nodeId of nodeIdsForClass) {
-				let currentNode:
-					| { id: number; op: string; args: number[] }
-					| undefined;
-				for (const ec of currentClasses) {
-					const found = ec.nodes.find((n) => n.id === nodeId);
-					if (found) {
-						currentNode = found;
-						break;
-					}
-				}
-
-				let nextNode:
-					| { id: number; op: string; args: number[] }
-					| undefined;
-				for (const ec of nextClasses) {
-					const found = ec.nodes.find((n) => n.id === nodeId);
-					if (found) {
-						nextNode = found;
-						break;
-					}
-				}
+				const currentNode = currentEClass?.nodes.find(
+					(n) => n.id === nodeId,
+				);
+				const nextNode = nextEClass?.nodes.find((n) => n.id === nodeId);
 
 				const isTrueNewNode =
 					!currentNode &&
