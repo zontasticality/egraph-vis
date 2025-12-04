@@ -20,10 +20,18 @@ export interface LayoutConfig {
     /** Spacing between layers (for layered algorithm) or levels (for mrtree) */
     layerSpacing: number;
 
-    /** Spacing between edges and nodes */
+    /**
+     * Minimum spacing between edge segments and nodes.
+     * Primarily used in layered layout for orthogonal edge routing.
+     * Has little to no effect in force-directed layouts.
+     */
     edgeNodeSpacing: number;
 
-    /** Spacing between edges */
+    /**
+     * Spacing between parallel edge segments.
+     * Primarily used in layered layout when multiple edges run parallel.
+     * Has little to no effect in force-directed layouts.
+     */
     edgeEdgeSpacing: number;
 
     /** Padding inside containers [top, right, bottom, left] */

@@ -149,7 +149,7 @@
                         max="100"
                         step="5"
                         bind:value={config.nodeSpacing}
-                        on:change={dispatchChange}
+                        on:input={dispatchChange}
                     />
                     <button
                         class="revert-btn"
@@ -186,51 +186,30 @@
                 </div>
             </div>
 
-            <div class="section">
-                <label>Edge-Node Spacing ({config.edgeNodeSpacing}px)</label>
-                <div class="input-row">
-                    <input
-                        type="range"
-                        min="0"
-                        max="50"
-                        step="1"
-                        bind:value={config.edgeNodeSpacing}
-                        on:change={dispatchChange}
-                    />
-                    <button
-                        class="revert-btn"
-                        on:click={() => revertProperty("edgeNodeSpacing")}
-                        disabled={isAtDefault("edgeNodeSpacing")}
-                        title="Reset to default"
-                        aria-label="Reset edge-node spacing to default"
-                    >
-                        ↺
-                    </button>
+            {#if config.algorithm === "layered"}
+                <div class="section">
+                    <label>Edge Spacing ({config.edgeEdgeSpacing}px)</label>
+                    <div class="input-row">
+                        <input
+                            type="range"
+                            min="0"
+                            max="50"
+                            step="1"
+                            bind:value={config.edgeEdgeSpacing}
+                            on:input={dispatchChange}
+                        />
+                        <button
+                            class="revert-btn"
+                            on:click={() => revertProperty("edgeEdgeSpacing")}
+                            disabled={isAtDefault("edgeEdgeSpacing")}
+                            title="Reset to default"
+                            aria-label="Reset edge spacing to default"
+                        >
+                            ↺
+                        </button>
+                    </div>
                 </div>
-            </div>
-
-            <div class="section">
-                <label>Edge-Edge Spacing ({config.edgeEdgeSpacing}px)</label>
-                <div class="input-row">
-                    <input
-                        type="range"
-                        min="0"
-                        max="50"
-                        step="1"
-                        bind:value={config.edgeEdgeSpacing}
-                        on:change={dispatchChange}
-                    />
-                    <button
-                        class="revert-btn"
-                        on:click={() => revertProperty("edgeEdgeSpacing")}
-                        disabled={isAtDefault("edgeEdgeSpacing")}
-                        title="Reset to default"
-                        aria-label="Reset edge-edge spacing to default"
-                    >
-                        ↺
-                    </button>
-                </div>
-            </div>
+            {/if}
 
             {#if config.algorithm === "layered" || config.algorithm === "mrtree"}
                 <div class="section">
@@ -242,7 +221,7 @@
                             max="100"
                             step="5"
                             bind:value={config.layerSpacing}
-                            on:change={dispatchChange}
+                            on:input={dispatchChange}
                         />
                         <button
                             class="revert-btn"
@@ -267,7 +246,7 @@
                             max="500"
                             step="50"
                             bind:value={config.force.iterations}
-                            on:change={dispatchChange}
+                            on:input={dispatchChange}
                         />
                         <button
                             class="revert-btn"
@@ -289,7 +268,7 @@
                             max="5.0"
                             step="0.1"
                             bind:value={config.force.repulsion}
-                            on:change={dispatchChange}
+                            on:input={dispatchChange}
                         />
                         <button
                             class="revert-btn"
