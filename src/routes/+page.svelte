@@ -239,10 +239,12 @@
         reload();
     });
 
-    // Live update when editing
+    // Live update when editing - WITH SAFEGUARDS
+    // Iteration cap prevents infinite loops from recursive rules
     $: if ($isEditing && $draftPreset) {
         loadPreset($draftPreset, {
             implementation: isDeferred ? "deferred" : "naive",
+            iterationCap: 100, // Safety limit to prevent freezing
         });
     }
 </script>
