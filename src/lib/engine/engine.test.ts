@@ -385,7 +385,7 @@ describe('TimelineEngine', () => {
             const engine = new TimelineEngine();
             const nestedFunctionsPreset: PresetConfig = {
                 id: "nested-functions",
-                label: "Nested Functions",
+                label: "Nested Functions 5x5 (Deferred Demo)",
                 description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
                 root: {
                     op: "x",
@@ -463,7 +463,7 @@ describe('TimelineEngine', () => {
             const engine = new TimelineEngine();
             const nestedFunctionsPreset: PresetConfig = {
                 id: "nested-functions",
-                label: "Nested Functions",
+                label: "Nested Functions 5x5 (Deferred Demo)",
                 description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
                 root: {
                     op: "x",
@@ -522,7 +522,7 @@ describe('TimelineEngine', () => {
                 }
             }
 
-            // WHY REBUILD TAKES 11 TIMESTEPS (NOT 4+5=9):
+            // WHY REBUILD TAKES 9 TIMESTEPS (4+5):
             //
             // Rebuild has two sequential phases, each emitting snapshots:
             //
@@ -531,40 +531,134 @@ describe('TimelineEngine', () => {
             //    - Emits 1 snapshot per non-canonical e-class merged
             //    - In nested functions: 4 snapshots (merging a,b,d,e → c)
             //
-            // 2. REPAIR PHASE: 7 snapshots (NOT 5!)
+            // 2. REPAIR PHASE: 5 snapshots
             //    - Processes worklist to restore congruence closure
             //    - Emits 1 snapshot per e-class ID popped from worklist
+            //    - Congruence cascades through 5 structural levels:
+            //      1. Process class 5: merges 5 i(...) parents → adds class 1 to worklist
+            //      2. Process class 1: merges 5 h(...) parents → adds class 2 to worklist
+            //      3. Process class 2: merges 5 g(...) parents → adds class 3 to worklist
+            //      4. Process class 3: merges 5 f(...) parents → adds class 4 to worklist
+            //      5. Process class 4: merges 5 x(...) nodes (root level)
             //
-            //    WHY 7 INSTEAD OF 5 LEVELS?
-            //    During the write phase, union-find structure shifts:
-            //      • Merge a→c: winner is class 10, add to worklist
-            //      • Merge b→c: winner is class 5, add to worklist (now 10→5 in union-find)
-            //      • Both class 10 and class 5 are in the worklist, but point to SAME canonical class!
+            //    Each level does meaningful work - no redundant processing!
             //
-            //    So repair processes each level TWICE:
-            //      1. Process class 10 (redirects to 5): merges 5 i(...) parents → adds class 6
-            //      2. Process class 5: tries to merge already-merged i(...) parents (no-op)
-            //      3. Process class 6 (redirects to 1): merges 5 h(...) parents → adds class 2
-            //      4. Process class 1: tries to merge already-merged h(...) parents (no-op)
-            //      5. Process class 2: merges 5 g(...) parents → adds class 3 (no duplicate)
-            //      6. Process class 3: merges 5 f(...) parents → adds class 4 (no duplicate)
-            //      7. Process class 4: merges 5 x(...) nodes (root level)
+            // IMPORTANT: We canonicalize IDs before adding to worklist (src/lib/engine/runtime.ts:171)
+            // This prevents duplicate entries and ensures efficient congruence closure.
             //
-            //    The first 2 levels get duplicated worklist entries, later levels don't.
-            //    This is why we see 7 snapshots instead of 5.
-            //
-            // SUMMARY: 4 compact + 7 repair = 11 rebuild timesteps
+            // SUMMARY: 4 compact + 5 repair = 9 rebuild timesteps
 
             expect(compactCount).toBe(4); // We merged a,b,d,e into c
-            expect(repairCount).toBe(7); // Includes duplicates from worklist aliasing
-            expect(compactCount + repairCount).toBe(11); // Total rebuild timesteps
+            expect(repairCount).toBe(5); // One per structural level: i→h→g→f→x
+            expect(compactCount + repairCount).toBe(9); // Total rebuild timesteps
+        });
+
+        it('should have correct phase sequence in deferred mode', async () => {
+            const engine = new TimelineEngine();
+            const nestedFunctionsPreset: PresetConfig = {
+                id: "nested-functions",
+                label: "Nested Functions 5x5 (Deferred Demo)",
+                description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
+                root: {
+                    op: "x",
+                    args: [
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["a"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["b"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["c"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["d"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["e"] }] }] }] },
+                    ],
+                },
+                rewrites: [
+                    { name: "a-to-c", lhs: "a", rhs: "c", enabled: true },
+                    { name: "b-to-c", lhs: "b", rhs: "c", enabled: true },
+                    { name: "d-to-c", lhs: "d", rhs: "c", enabled: true },
+                    { name: "e-to-c", lhs: "e", rhs: "c", enabled: true },
+                ],
+            };
+
+            engine.loadPreset(nestedFunctionsPreset, {
+                iterationCap: 10,
+                implementation: 'deferred',
+                parallelism: 5
+            });
+            const timeline = await engine.runUntilHalt();
+
+            // Print phase sequence for first iteration
+            console.log('Phase sequence for first iteration:');
+            const firstIterStates = timeline.states.slice(0, 30);
+            firstIterStates.forEach((s, i) => {
+                console.log(`  ${i}: ${s.phase} (stepIndex=${s.stepIndex})`);
+            });
+
+            // Check phase sequence is correct
+            const phases = timeline.states.map(s => s.phase);
+
+            // Expected sequence: init, read-batch..., read, write..., compact..., repair..., (repeat)
+            expect(phases[0]).toBe('init');
+            expect(phases[1]).toBe('read-batch');
+
+            // Find first read phase (after all read-batch phases)
+            const firstReadIndex = phases.indexOf('read');
+            expect(firstReadIndex).toBeGreaterThan(0);
+
+            // After read should come write
+            const firstWriteIndex = phases.indexOf('write', firstReadIndex);
+            expect(firstWriteIndex).toBeGreaterThan(firstReadIndex);
+
+            // Check visual states structure
+            console.log('\nVisual state structure check:');
+            const readBatchState = timeline.states.find(s => s.phase === 'read-batch');
+            const readState = timeline.states.find(s => s.phase === 'read');
+            const writeState = timeline.states.find(s => s.phase === 'write');
+
+            if (readBatchState?.visualStates) {
+                const nodeMap = readBatchState.visualStates.nodes;
+                const eclassMap = readBatchState.visualStates.eclasses;
+                console.log(`read-batch: ${nodeMap.size} nodes, ${eclassMap.size} eclasses`);
+
+                // Count node states
+                const nodeStateCounts = new Map<string, number>();
+                nodeMap.forEach(ns => {
+                    const count = nodeStateCounts.get(ns.styleClass.toString()) || 0;
+                    nodeStateCounts.set(ns.styleClass.toString(), count + 1);
+                });
+                console.log('  Node styleClass distribution:', Object.fromEntries(nodeStateCounts));
+            }
+
+            if (readState?.visualStates) {
+                const nodeMap = readState.visualStates.nodes;
+                console.log(`read: ${nodeMap.size} nodes`);
+                const nodeStateCounts = new Map<string, number>();
+                nodeMap.forEach(ns => {
+                    const count = nodeStateCounts.get(ns.styleClass.toString()) || 0;
+                    nodeStateCounts.set(ns.styleClass.toString(), count + 1);
+                });
+                console.log('  Node styleClass distribution:', Object.fromEntries(nodeStateCounts));
+            }
+
+            if (writeState?.visualStates) {
+                const nodeMap = writeState.visualStates.nodes;
+                console.log(`write: ${nodeMap.size} nodes`);
+                const nodeStateCounts = new Map<string, number>();
+                nodeMap.forEach(ns => {
+                    const count = nodeStateCounts.get(ns.styleClass.toString()) || 0;
+                    nodeStateCounts.set(ns.styleClass.toString(), count + 1);
+                });
+                console.log('  Node styleClass distribution:', Object.fromEntries(nodeStateCounts));
+            }
+
+            // Verify that visual states are populated correctly
+            expect(readBatchState?.visualStates?.nodes.size).toBeGreaterThan(0);
+            expect(readState?.visualStates?.nodes.size).toBeGreaterThan(0);
+            expect(writeState?.visualStates?.nodes.size).toBeGreaterThan(0);
         });
 
         it('should process all rules against e-class batches, not batch per rule', async () => {
             const engine = new TimelineEngine();
             const nestedFunctionsPreset: PresetConfig = {
                 id: "nested-functions",
-                label: "Nested Functions",
+                label: "Nested Functions 5x5 (Deferred Demo)",
                 description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
                 root: {
                     op: "x",

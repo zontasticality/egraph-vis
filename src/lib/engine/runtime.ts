@@ -165,7 +165,10 @@ export class EGraphRuntime {
         // We leave the nodes in 'loser' and 'loser' in 'eclasses'.
         // We will compact them in 'rebuild()'.
         if (implementation === 'deferred') {
-            this.worklist.add(winner);
+            // IMPORTANT: Canonicalize before adding to worklist to avoid duplicates.
+            // If winner was merged with another class in a previous merge, we want to
+            // add the current canonical representative, not a stale ID.
+            this.worklist.add(this.find(winner));
             return winner;
         }
 
@@ -182,7 +185,9 @@ export class EGraphRuntime {
         this.eclasses.delete(loser);
         this.diffs.push({ type: 'merge', winner, losers: [loser] });
 
-        this.worklist.add(winner);
+        // Canonicalize before adding to worklist (should already be canonical in naive mode,
+        // but good practice to be consistent)
+        this.worklist.add(this.find(winner));
 
         return winner;
     }

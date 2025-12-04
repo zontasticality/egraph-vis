@@ -45,6 +45,11 @@
             description:
                 "Initial state: building the E-Graph from the root expression",
         },
+        "read-batch": {
+            label: "Read Batch",
+            description:
+                "Searching batch of E-Classes: processing matches in parallel groups",
+        },
         read: {
             label: "Read",
             description:
@@ -78,6 +83,7 @@
     // Phase colors (using border colors for vibrancy)
     const phaseColors: Record<string, string> = {
         init: "#d1d5db",
+        "read-batch": "#fcd34d", // Slightly lighter yellow than read
         read: "#fbbf24",
         write: "#f87171",
         compact: "#fb923c",
@@ -384,6 +390,12 @@
         background: #e5e7eb;
         color: #374151;
         border: 1px solid #d1d5db;
+    }
+
+    .phase-badge.phase-read-batch {
+        background: #fef9e7;
+        color: #92400e;
+        border: 1px solid #fcd34d;
     }
 
     .phase-badge.phase-read {

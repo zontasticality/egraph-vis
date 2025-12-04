@@ -421,6 +421,18 @@ export function* rebuildGen(runtime: EGraphRuntime): Generator<{ phase: 'compact
 
         runtime.worklist.delete(eclassId);
 
+        // IMPORTANT: Check if this e-class still exists after compaction.
+        // If it was compacted into another class, skip it (redundant work).
+        const canonicalId = runtime.find(eclassId);
+        if (!runtime.eclasses.has(canonicalId)) {
+            // E-class was deleted during compaction, skip
+            continue;
+        }
+        if (eclassId !== canonicalId) {
+            // E-class is non-canonical (was compacted), skip redundant repair
+            continue;
+        }
+
         // Repair this item (may add more items to worklist)
         repair(runtime, eclassId);
 
