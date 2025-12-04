@@ -297,6 +297,31 @@
 			}
 		}
 
+		// Naive mode (and class-level transitions in deferred) can hit the same issue:
+		// a newly canonicalized e-class doesn't exist in the current layout, so anchor
+		// it to the previous canonical class to avoid spawning at (0,0).
+		const classSpawnAnchors = new Map<number, number>();
+		for (const entry of nextState?.unionFind ?? []) {
+			const nextCanonical = entry.canonical;
+			const targetClassId = `class-${nextCanonical}`;
+			if (state.layout.groups.has(targetClassId)) continue;
+
+			const currentCanonical = canonicalMapCurrent.get(entry.id);
+			if (
+				currentCanonical === undefined ||
+				currentCanonical === nextCanonical
+			) {
+				continue;
+			}
+
+			const anchorClassId = `class-${currentCanonical}`;
+			if (!state.layout.groups.has(anchorClassId)) continue;
+
+			if (!classSpawnAnchors.has(nextCanonical)) {
+				classSpawnAnchors.set(nextCanonical, currentCanonical);
+			}
+		}
+
 		const interpolateGroupPosition = (id: string) => {
 			const currentPos = state.layout!.groups.get(id);
 			const nextPos = nextState?.layout?.groups.get(id);
@@ -313,6 +338,31 @@
 				if (anchorId !== undefined) {
 					const anchorPos = state.layout!.groups.get(
 						`set-${anchorId}`,
+					);
+					if (anchorPos) {
+						return {
+							x:
+								anchorPos.x +
+								(nextPos.x - anchorPos.x) * easedProgress,
+							y:
+								anchorPos.y +
+								(nextPos.y - anchorPos.y) * easedProgress,
+						};
+					}
+				}
+			}
+
+			if (
+				shouldInterpolate &&
+				!currentPos &&
+				nextPos &&
+				id.startsWith("class-")
+			) {
+				const canonicalId = parseInt(id.substring(6));
+				const anchorId = classSpawnAnchors.get(canonicalId);
+				if (anchorId !== undefined) {
+					const anchorPos = state.layout!.groups.get(
+						`class-${anchorId}`,
 					);
 					if (anchorPos) {
 						return {
@@ -358,6 +408,33 @@
 				if (anchorId !== undefined) {
 					const anchorDims = state.layout!.groups.get(
 						`set-${anchorId}`,
+					);
+					if (anchorDims) {
+						return {
+							width:
+								anchorDims.width +
+								(nextDims.width - anchorDims.width) *
+									easedProgress,
+							height:
+								anchorDims.height +
+								(nextDims.height - anchorDims.height) *
+									easedProgress,
+						};
+					}
+				}
+			}
+
+			if (
+				shouldInterpolate &&
+				!currentDims &&
+				nextDims &&
+				id.startsWith("class-")
+			) {
+				const canonicalId = parseInt(id.substring(6));
+				const anchorId = classSpawnAnchors.get(canonicalId);
+				if (anchorId !== undefined) {
+					const anchorDims = state.layout!.groups.get(
+						`class-${anchorId}`,
 					);
 					if (anchorDims) {
 						return {
