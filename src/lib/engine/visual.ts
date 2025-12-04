@@ -22,10 +22,13 @@ export function computeVisualStates(state: EGraphState): {
 
     // Build lookup sets for efficient classification
     const matchedNodeIds = new Set<number>();
-    state.metadata.matches.forEach(m => m.nodes.forEach(id => matchedNodeIds.add(id)));
+    state.metadata.matches?.forEach(m => m.nodes.forEach(id => matchedNodeIds.add(id)));
+
+    // Also add currentMatchingNodes if present (for read-batch phase)
+    state.metadata.currentMatchingNodes?.forEach(id => matchedNodeIds.add(id));
 
     const newNodeIds = new Set<number>();
-    state.metadata.diffs.forEach(d => {
+    state.metadata.diffs?.forEach(d => {
         if (d.type === 'add') newNodeIds.add(d.nodeId);
         if (d.type === 'rewrite') newNodeIds.add(d.createdId);
     });
@@ -114,7 +117,7 @@ function computeNodeStyleClass(
     }
 
     // Priority 4: Read/Write phase - matched LHS nodes
-    if ((phase === 'read' || phase === 'write') && isMatched) {
+    if ((phase === 'read' || phase === 'read-batch' || phase === 'write') && isMatched) {
         return NSC.MatchedLHS;
     }
 

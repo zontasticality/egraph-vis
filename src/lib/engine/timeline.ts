@@ -1,6 +1,16 @@
 import { create } from 'mutative';
 import { EGraphRuntime, SeededRandom } from './runtime';
-import { rebuild, collectMatches, collectMatchesGen, applyMatches, applyMatchesGen, rebuildGen } from './algorithms';
+import {
+    rebuild,
+    collectMatches,
+    collectMatchesGen,
+    applyMatches,
+    applyMatchesGen,
+    rebuildGen,
+    collectMatchingNodes,
+    instantiatePattern,
+    type Match
+} from './algorithms';
 import { computeVisualStates } from './visual';
 import { layoutManager } from './layout';
 import type {
@@ -12,7 +22,9 @@ import type {
     EClassViewModel,
     StepMetadata,
     Pattern,
-    ENodeId
+    ENodeId,
+    WriteList,
+    WriteListEntry
 } from './types';
 import { ChunkedArray } from '../utils/chunkedArray';
 
@@ -54,63 +66,151 @@ export class TimelineEngine implements EGraphEngine {
         const cap = this.options.iterationCap ?? 100;
 
         while (iteration < cap) {
-            // 1. Read Phase (PARALLELIZABLE - search for matches)
-            // Higher parallelism = simulate more parallel search threads = fewer snapshots
-            let allMatches: Match[] = [];
             const parallelism = this.options.parallelism ?? 1;
 
-            if (this.options.implementation === 'deferred' && parallelism > 1) {
-                // Use generator to show intermediate search progress
-                const matchGen = collectMatchesGen(this.runtime, this.getRewrites(), parallelism);
-                for (const batchMatches of matchGen) {
-                    allMatches = batchMatches;
-                    this.emitSnapshot('read', allMatches);
+            if (this.options.implementation === 'deferred') {
+                // ═══════════════════════════════════════════════════════
+                // DEFERRED MODE: Fully Separated Read → Write
+                // ═══════════════════════════════════════════════════════
+
+                // --- READ PHASE: Build writelist (PURE - no mutation) ---
+                const writelist: WriteList = { entries: [], nextIndex: 0 };
+                const allMatches: Match[] = [];  // Track all matches for highlighting
+
+                const matchGen = collectMatchesGen(
+                    this.runtime,
+                    this.getRewrites(),
+                    parallelism
+                );
+
+                for (const batchResult of matchGen) {
+                    // Add matches to writelist with batch tracking
+                    for (const match of batchResult.matches) {
+                        writelist.entries.push({
+                            ruleName: match.rule.name,
+                            rhsPattern: match.rule.rhs,
+                            targetClass: match.eclassId,
+                            substitution: match.substitution,
+                            batchId: batchResult.batchId
+                        });
+                    }
+
+                    // Accumulate all matches for visualization
+                    allMatches.push(...batchResult.matches);
+
+                    // Emit snapshot showing batch progress
+                    this.emitSnapshot('read-batch', allMatches, undefined, {
+                        writelist: this.cloneWritelist(writelist),
+                        currentMatchingNodes: batchResult.matchingNodeIds
+                    });
                 }
+
+                // Final read snapshot with complete writelist
+                this.emitSnapshot('read', allMatches, undefined, {
+                    writelist: this.cloneWritelist(writelist),
+                    currentMatchingNodes: []
+                });
+
+                if (writelist.entries.length === 0) {
+                    this.timeline.haltedReason = 'saturated';
+                    break;
+                }
+
+                // --- WRITE PHASE: Consume writelist sequentially (MUTATES) ---
+                let hasChanges = false;
+                for (let i = 0; i < writelist.entries.length; i++) {
+                    const entry = writelist.entries[i];
+
+                    // Re-canonicalize substitution (may have changed from earlier merges)
+                    const canonicalSubst = new Map<string, ENodeId>();
+                    for (const [varName, id] of entry.substitution) {
+                        canonicalSubst.set(varName, this.runtime.find(id));
+                    }
+
+                    // Instantiate RHS pattern NOW (write phase only)
+                    const newId = instantiatePattern(
+                        this.runtime,
+                        entry.rhsPattern,
+                        canonicalSubst
+                    );
+
+                    // Re-canonicalize target (may have changed from earlier merges)
+                    const target = this.runtime.find(entry.targetClass);
+                    const actualNewId = this.runtime.find(newId);
+
+                    // Deduplication: skip if already equal
+                    if (target !== actualNewId) {
+                        this.runtime.merge(target, actualNewId, 'deferred', this.rng);
+                        hasChanges = true;
+
+                        // Record the rewrite diff
+                        this.runtime.diffs.push({
+                            type: 'rewrite',
+                            rule: entry.ruleName,
+                            targetClass: target,
+                            createdId: actualNewId,
+                            mergedInto: this.runtime.find(target)
+                        });
+                    }
+
+                    // Update writelist consumption pointer
+                    writelist.nextIndex = i + 1;
+
+                    // Emit snapshot showing write progress
+                    // IMPORTANT: Pass allMatches to preserve LHS highlighting
+                    this.emitSnapshot('write', allMatches, undefined, {
+                        writelist: this.cloneWritelist(writelist),
+                        currentMatchingNodes: []
+                    });
+                }
+
+                // If no actual changes were made (all deduplicated), we're saturated
+                if (!hasChanges) {
+                    this.timeline.haltedReason = 'saturated';
+                    break;
+                }
+
+                // --- REBUILD PHASE: Compact and Repair ---
+                const rebuildIterator = rebuildGen(this.runtime);
+                for (const step of rebuildIterator) {
+                    this.emitSnapshot(step.phase, [], step.eclassId);
+                }
+
             } else {
-                // Sequential search (naive mode or parallelism = 1)
-                allMatches = collectMatches(this.runtime, this.getRewrites());
+                // ═══════════════════════════════════════════════════════
+                // NAIVE MODE: Interleaved Read-Write (unchanged)
+                // ═══════════════════════════════════════════════════════
+
+                const allMatches = collectMatches(this.runtime, this.getRewrites());
                 this.emitSnapshot('read', allMatches);
-            }
 
-            if (allMatches.length === 0) {
-                this.timeline.haltedReason = 'saturated';
-                break;
-            }
+                if (allMatches.length === 0) {
+                    this.timeline.haltedReason = 'saturated';
+                    break;
+                }
 
-            // 2. Write Phase (SEQUENTIAL - mutates shared data structures)
-            // Apply all matches sequentially
-            const applyGen = applyMatchesGen(this.runtime, allMatches, this.options.implementation, this.rng);
+                const applyGen = applyMatchesGen(
+                    this.runtime,
+                    allMatches,
+                    'naive',
+                    this.rng
+                );
 
-            let hasChanges = false;
-            for (const _step of applyGen) {
-                hasChanges = true;
-                this.emitSnapshot('write', allMatches);
+                let hasChanges = false;
+                for (const _step of applyGen) {
+                    hasChanges = true;
+                    this.emitSnapshot('write', allMatches);
 
-                // In naive mode, rebuild after each rewrite
-                if (this.options.implementation === 'naive') {
+                    // Rebuild after each write in naive mode
                     const rebuildIterator = rebuildGen(this.runtime);
                     for (const step of rebuildIterator) {
-                        // Emit snapshot with the specific phase (compact or repair)
-                        // Don't pass matches during rebuild - they're not relevant to rebuild phases
                         this.emitSnapshot(step.phase, [], step.eclassId);
                     }
                 }
-            }
 
-            if (!hasChanges) {
-                this.timeline.haltedReason = 'saturated';
-                break;
-            }
-
-            // 3. Rebuild Phase (SEQUENTIAL - only for deferred mode)
-            // Efficiency comes from amortization (once per iteration) and deduplication (worklist)
-            // Naive mode already rebuilt during applyMatchesGen
-            if (this.options.implementation === 'deferred') {
-                const rebuildIterator = rebuildGen(this.runtime);
-                for (const step of rebuildIterator) {
-                    // Emit snapshot with the specific phase (compact or repair)
-                    // Pass the active e-class ID to highlight just that class
-                    this.emitSnapshot(step.phase, allMatches, step.eclassId);
+                if (!hasChanges) {
+                    this.timeline.haltedReason = 'saturated';
+                    break;
                 }
             }
 
@@ -222,49 +322,21 @@ export class TimelineEngine implements EGraphEngine {
      * Used for highlighting matched nodes during the read phase.
      */
     private collectMatchedNodes(eclassId: number, pattern: Pattern | string | number): Set<number> {
-        const matchedNodeIds = new Set<number>();
-        const canonicalId = this.runtime.find(eclassId);
-        const eclass = this.runtime.eclasses.get(canonicalId);
-        if (!eclass) return matchedNodeIds;
+        // Delegate to shared implementation in algorithms.ts
+        return collectMatchingNodes(this.runtime, pattern, eclassId);
+    }
 
-        // For variables, collect ALL nodes in the matched e-class
-        // The variable matched this entire e-class, so all nodes should be highlighted
-        if (typeof pattern === 'string' && pattern.startsWith('?')) {
-            for (const nodeId of eclass.nodes) {
-                matchedNodeIds.add(nodeId);
-            }
-            return matchedNodeIds;
-        }
-
-        // For structural patterns, find matching nodes
-        if (typeof pattern === 'object' && 'op' in pattern) {
-            for (const nodeId of eclass.nodes) {
-                const node = this.runtime.nodes[nodeId];
-                // Only include nodes that match the operator
-                if (node && node.op === pattern.op) {
-                    matchedNodeIds.add(nodeId);
-                    // Recursively collect from arguments
-                    pattern.args.forEach((argPattern, index) => {
-                        if (index < node.args.length) {
-                            const childMatches = this.collectMatchedNodes(node.args[index], argPattern);
-                            for (const childId of childMatches) {
-                                matchedNodeIds.add(childId);
-                            }
-                        }
-                    });
-                }
-            }
-        } else if (typeof pattern === 'string') {
-            // Constant pattern like "foo" - match nodes with that op
-            for (const nodeId of eclass.nodes) {
-                const node = this.runtime.nodes[nodeId];
-                if (node && node.op === pattern && node.args.length === 0) {
-                    matchedNodeIds.add(nodeId);
-                }
-            }
-        }
-
-        return matchedNodeIds;
+    /**
+     * Deep clone writelist for immutable snapshots.
+     */
+    private cloneWritelist(writelist: WriteList): WriteList {
+        return {
+            entries: writelist.entries.map(e => ({
+                ...e,
+                substitution: new Map(e.substitution)  // Clone the Map
+            })),
+            nextIndex: writelist.nextIndex
+        };
     }
 
     /**
@@ -292,7 +364,15 @@ export class TimelineEngine implements EGraphEngine {
         };
     }
 
-    private emitSnapshot(phase: EGraphState['phase'], matches: any[] = [], activeId?: number) {
+    private emitSnapshot(
+        phase: EGraphState['phase'],
+        matches: any[] = [],
+        activeId?: number,
+        deferredMetadata?: {
+            writelist?: WriteList;
+            currentMatchingNodes?: number[];
+        }
+    ) {
         const prevState = this.timeline.states[this.timeline.states.length - 1];
 
         // If no previous state, create initial empty state
@@ -359,6 +439,16 @@ export class TimelineEngine implements EGraphEngine {
 
             // 5. Metadata
             draft.metadata = this.buildMetadata(matches, activeId);
+
+            // Add deferred mode metadata if provided
+            if (deferredMetadata) {
+                if (deferredMetadata.writelist) {
+                    draft.metadata.writelist = deferredMetadata.writelist;
+                }
+                if (deferredMetadata.currentMatchingNodes) {
+                    draft.metadata.currentMatchingNodes = deferredMetadata.currentMatchingNodes;
+                }
+            }
         });
 
         this.timeline.states.push(nextState);

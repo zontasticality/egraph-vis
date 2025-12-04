@@ -9,6 +9,12 @@ export interface Match {
     substitution: Map<string, ENodeId>;
 }
 
+export interface MatchBatchResult {
+    matches: Match[];       // Batch-local matches only
+    batchId: number;
+    matchingNodeIds: number[];  // Nodes involved in matches (for highlighting)
+}
+
 // --- Rebuild / Restoration ---
 
 export function rebuild(runtime: EGraphRuntime) {
@@ -128,38 +134,115 @@ export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Ma
     return matches;
 }
 
-// Generator version that yields periodically to allow snapshots during long searches
-// Simulates parallel search by batching e-classes together
-export function* collectMatchesGen(
+/**
+ * Collect node IDs that match a pattern for visualization highlighting.
+ * Shared logic between algorithms and timeline for consistency.
+ */
+export function collectMatchingNodes(
     runtime: EGraphRuntime,
-    rules: RewriteRule[],
-    parallelism: number = 1
-): Generator<Match[]> {
-    const allMatches: Match[] = [];
-    let processedCount = 0;
-    const eclassArray = Array.from(runtime.eclasses);
-    const totalEClasses = eclassArray.length;
+    pattern: Pattern | number,
+    eclassId: ENodeId
+): Set<number> {
+    const matchedNodeIds = new Set<number>();
+    const canonicalId = runtime.find(eclassId);
+    const eclass = runtime.eclasses.get(canonicalId);
+    if (!eclass) return matchedNodeIds;
 
-    for (const rule of rules) {
-        for (const [id, eclass] of eclassArray) {
-            const found = matchPattern(runtime, rule.lhs, id);
-            for (const substitution of found) {
-                allMatches.push({ rule, eclassId: id, substitution });
+    // Variable pattern: match all nodes in e-class
+    if (typeof pattern === 'string' && pattern.startsWith('?')) {
+        for (const nodeId of eclass.nodes) {
+            matchedNodeIds.add(nodeId);
+        }
+        return matchedNodeIds;
+    }
+
+    // Structural pattern: match specific nodes
+    if (typeof pattern === 'object' && 'op' in pattern) {
+        for (const nodeId of eclass.nodes) {
+            const node = runtime.nodes[nodeId];
+            if (node && node.op === pattern.op) {
+                matchedNodeIds.add(nodeId);
+                // Recursively collect from arguments
+                pattern.args.forEach((argPattern, index) => {
+                    if (index < node.args.length) {
+                        const childMatches = collectMatchingNodes(
+                            runtime,
+                            argPattern,
+                            node.args[index]
+                        );
+                        childMatches.forEach(id => matchedNodeIds.add(id));
+                    }
+                });
             }
-
-            processedCount++;
-
-            // Yield after processing 'parallelism' e-classes (simulating parallel batch)
-            if (processedCount >= parallelism) {
-                yield allMatches.slice(); // Return current matches
-                processedCount = 0;
+        }
+    } else if (typeof pattern === 'string') {
+        // Constant pattern
+        for (const nodeId of eclass.nodes) {
+            const node = runtime.nodes[nodeId];
+            if (node && node.op === pattern && node.args.length === 0) {
+                matchedNodeIds.add(nodeId);
             }
         }
     }
 
-    // Yield final batch if any remaining
-    if (processedCount > 0 || allMatches.length > 0) {
-        yield allMatches;
+    return matchedNodeIds;
+}
+
+/**
+ * Generator version that yields periodically to allow snapshots during long searches.
+ * In deferred mode with parallelism > 1, simulates parallel search by batching e-classes.
+ *
+ * IMPORTANT: Read phase is PURE - does not mutate the graph.
+ * Returns matches with RHS patterns to be instantiated later in write phase.
+ *
+ * BATCHING STRATEGY:
+ * - Divide e-classes into batches of size 'parallelism'
+ * - For each batch, check ALL rules against those e-classes
+ * - Yield after each batch (simulating parallel search threads)
+ * - This gives ceil(numEClasses / parallelism) batches, NOT ceil(numEClasses / parallelism) * numRules
+ */
+export function* collectMatchesGen(
+    runtime: EGraphRuntime,
+    rules: RewriteRule[],
+    parallelism: number = 1
+): Generator<MatchBatchResult> {
+    const eclassArray = Array.from(runtime.eclasses);
+    const enabledRules = rules.filter(r => r.enabled);
+    let batchId = 0;
+
+    // Split e-classes into batches
+    for (let batchStart = 0; batchStart < eclassArray.length; batchStart += parallelism) {
+        const batchEnd = Math.min(batchStart + parallelism, eclassArray.length);
+        const batchEClasses = eclassArray.slice(batchStart, batchEnd);
+
+        const batchMatches: Match[] = [];
+        const batchNodeIds: Set<number> = new Set();
+
+        // Check ALL rules against this batch of e-classes
+        for (const rule of enabledRules) {
+            for (const [id, eclass] of batchEClasses) {
+                const found = matchPattern(runtime, rule.lhs, id);
+
+                for (const substitution of found) {
+                    batchMatches.push({
+                        rule,
+                        eclassId: id,
+                        substitution
+                    });
+
+                    // Collect matching node IDs for visualization
+                    const matchedNodes = collectMatchingNodes(runtime, rule.lhs, id);
+                    matchedNodes.forEach(nodeId => batchNodeIds.add(nodeId));
+                }
+            }
+        }
+
+        // Yield after processing this batch (even if empty, to show progress)
+        yield {
+            matches: batchMatches,
+            batchId: batchId++,
+            matchingNodeIds: Array.from(batchNodeIds)
+        };
     }
 }
 
@@ -404,7 +487,7 @@ export function applyMatches(
     }
 }
 
-function instantiatePattern(
+export function instantiatePattern(
     runtime: EGraphRuntime,
     pattern: Pattern | number,
     subst: Map<string, ENodeId>

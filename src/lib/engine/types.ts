@@ -65,7 +65,7 @@ export interface EGraphState {
     id: string;                      // `${presetId}:${stepIndex}`
     presetId: string;
     stepIndex: number;
-    phase: 'init' | 'read' | 'write' | 'compact' | 'repair' | 'done';
+    phase: 'init' | 'read' | 'read-batch' | 'write' | 'compact' | 'repair' | 'done';
     implementation: 'naive' | 'deferred';
     unionFind: Array<{ id: number; canonical: number; isCanonical: boolean }>;
     eclasses: EClassViewModel[];
@@ -86,6 +86,21 @@ export interface EClassViewModel {
     inWorklist: boolean;
 }
 
+// --- Deferred Mode Writelist ---
+
+export interface WriteListEntry {
+    ruleName: string;       // Rule name for diff recording
+    rhsPattern: Pattern;    // RHS pattern to instantiate
+    targetClass: ENodeId;   // E-class from the match (needs re-canonicalization)
+    substitution: Map<string, ENodeId>;  // Variable bindings (need re-canonicalization)
+    batchId: number;        // Batch that discovered this
+}
+
+export interface WriteList {
+    entries: WriteListEntry[];
+    nextIndex: number;      // Consumption pointer for write phase
+}
+
 export interface StepMetadata {
     diffs: DiffEvent[];
     matches: MatchEvent[]; // Nodes involved in pattern matches
@@ -97,6 +112,10 @@ export interface StepMetadata {
     haltedReason?: 'saturated' | 'iteration-cap' | 'canceled';
     timestamp?: number;
     activeId?: number; // ID of the e-class being processed (for compact/repair highlighting)
+
+    // Deferred mode fields
+    writelist?: WriteList;
+    currentMatchingNodes?: number[];
 }
 
 export interface MatchEvent {

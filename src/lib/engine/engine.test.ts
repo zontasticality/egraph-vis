@@ -380,6 +380,245 @@ describe('TimelineEngine', () => {
         });
     });
 
+    describe('Deferred Mode Phase Counting', () => {
+        it('should emit correct number of read-batch snapshots for nested functions preset', async () => {
+            const engine = new TimelineEngine();
+            const nestedFunctionsPreset: PresetConfig = {
+                id: "nested-functions",
+                label: "Nested Functions",
+                description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
+                root: {
+                    op: "x",
+                    args: [
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["a"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["b"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["c"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["d"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["e"] }] }] }] },
+                    ],
+                },
+                rewrites: [
+                    { name: "a-to-c", lhs: "a", rhs: "c", enabled: true },
+                    { name: "b-to-c", lhs: "b", rhs: "c", enabled: true },
+                    { name: "d-to-c", lhs: "d", rhs: "c", enabled: true },
+                    { name: "e-to-c", lhs: "e", rhs: "c", enabled: true },
+                ],
+            };
+
+            // Test with parallelism=1 (sequential)
+            engine.loadPreset(nestedFunctionsPreset, {
+                iterationCap: 10,
+                implementation: 'deferred',
+                parallelism: 1
+            });
+            const timeline1 = await engine.runUntilHalt();
+
+            // Count phases in first iteration (before first write)
+            const firstWriteIndex1 = timeline1.states.findIndex(s => s.phase === 'write');
+            const firstIterationStates1 = timeline1.states.slice(0, firstWriteIndex1);
+            const readBatchCount1 = firstIterationStates1.filter(s => s.phase === 'read-batch').length;
+            const readCount1 = firstIterationStates1.filter(s => s.phase === 'read').length;
+            const allWriteCount1 = timeline1.states.filter(s => s.phase === 'write').length;
+
+            console.log(`Parallelism=1: read-batch=${readBatchCount1}, read=${readCount1}, write=${allWriteCount1}`);
+
+            // Test with parallelism=5
+            const engine2 = new TimelineEngine();
+            engine2.loadPreset(nestedFunctionsPreset, {
+                iterationCap: 10,
+                implementation: 'deferred',
+                parallelism: 5
+            });
+            const timeline5 = await engine2.runUntilHalt();
+
+            const firstWriteIndex5 = timeline5.states.findIndex(s => s.phase === 'write');
+            const firstIterationStates5 = timeline5.states.slice(0, firstWriteIndex5);
+            const readBatchCount5 = firstIterationStates5.filter(s => s.phase === 'read-batch').length;
+            const readCount5 = firstIterationStates5.filter(s => s.phase === 'read').length;
+            const allWriteCount5 = timeline5.states.filter(s => s.phase === 'write').length;
+
+            console.log(`Parallelism=5: read-batch=${readBatchCount5}, read=${readCount5}, write=${allWriteCount5}`);
+
+            // With parallelism=1, we should process all e-classes sequentially
+            // Each rule is checked against all e-classes, yielding after each e-class
+            // Expected: Many read-batch snapshots (one per e-class per rule)
+
+            // With parallelism=5, we should process e-classes in batches of 5
+            // Expected: Fewer read-batch snapshots (one per batch of 5 e-classes per rule)
+
+            // The key invariant: parallelism should REDUCE the number of read-batch snapshots
+            expect(readBatchCount5).toBeLessThan(readBatchCount1);
+
+            // Both should have exactly 1 final 'read' snapshot
+            expect(readCount1).toBe(1);
+            expect(readCount5).toBe(1);
+
+            // Both should have the same total number of write snapshots (4 matches in iteration 0: a,b,d,e → c)
+            // Note: There may be more writes in subsequent iterations
+            expect(allWriteCount1).toBeGreaterThanOrEqual(4);
+            expect(allWriteCount5).toBeGreaterThanOrEqual(4);
+        });
+
+        it('should understand rebuild phase timesteps', async () => {
+            const engine = new TimelineEngine();
+            const nestedFunctionsPreset: PresetConfig = {
+                id: "nested-functions",
+                label: "Nested Functions",
+                description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
+                root: {
+                    op: "x",
+                    args: [
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["a"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["b"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["c"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["d"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["e"] }] }] }] },
+                    ],
+                },
+                rewrites: [
+                    { name: "a-to-c", lhs: "a", rhs: "c", enabled: true },
+                    { name: "b-to-c", lhs: "b", rhs: "c", enabled: true },
+                    { name: "d-to-c", lhs: "d", rhs: "c", enabled: true },
+                    { name: "e-to-c", lhs: "e", rhs: "c", enabled: true },
+                ],
+            };
+
+            engine.loadPreset(nestedFunctionsPreset, {
+                iterationCap: 10,
+                implementation: 'deferred',
+                parallelism: 5
+            });
+            const timeline = await engine.runUntilHalt();
+
+            // Analyze rebuild phases in first iteration
+            const firstWriteIndex = timeline.states.findIndex(s => s.phase === 'write');
+            const firstCompactIndex = timeline.states.findIndex(s => s.phase === 'compact');
+
+            // Get all states between first write and second read (or end)
+            const secondReadIndex = timeline.states.findIndex((s, i) => i > firstWriteIndex && s.phase === 'read');
+            const endIndex = secondReadIndex === -1 ? timeline.states.length : secondReadIndex;
+            const firstRebuildStates = timeline.states.slice(firstWriteIndex + 1, endIndex);
+
+            const compactCount = firstRebuildStates.filter(s => s.phase === 'compact').length;
+            const repairCount = firstRebuildStates.filter(s => s.phase === 'repair').length;
+
+            console.log(`First rebuild: ${compactCount} compact + ${repairCount} repair = ${compactCount + repairCount} total timesteps`);
+
+            // Analyze all rebuild phases across all iterations
+            let rebuildIndex = 0;
+            for (let i = 0; i < timeline.states.length; i++) {
+                if (timeline.states[i].phase === 'compact') {
+                    // Find the extent of this rebuild
+                    let j = i;
+                    while (j < timeline.states.length &&
+                           (timeline.states[j].phase === 'compact' || timeline.states[j].phase === 'repair')) {
+                        j++;
+                    }
+                    const rebuildStates = timeline.states.slice(i, j);
+                    const compacts = rebuildStates.filter(s => s.phase === 'compact').length;
+                    const repairs = rebuildStates.filter(s => s.phase === 'repair').length;
+                    console.log(`  Rebuild ${rebuildIndex++}: ${compacts} compact + ${repairs} repair = ${compacts + repairs} total`);
+                    i = j - 1; // Skip to end of this rebuild
+                }
+            }
+
+            // WHY REBUILD TAKES 11 TIMESTEPS (NOT 4+5=9):
+            //
+            // Rebuild has two sequential phases, each emitting snapshots:
+            //
+            // 1. COMPACT PHASE: 4 snapshots
+            //    - Merges non-canonical e-classes into their canonical representatives
+            //    - Emits 1 snapshot per non-canonical e-class merged
+            //    - In nested functions: 4 snapshots (merging a,b,d,e → c)
+            //
+            // 2. REPAIR PHASE: 7 snapshots (NOT 5!)
+            //    - Processes worklist to restore congruence closure
+            //    - Emits 1 snapshot per e-class ID popped from worklist
+            //
+            //    WHY 7 INSTEAD OF 5 LEVELS?
+            //    During the write phase, union-find structure shifts:
+            //      • Merge a→c: winner is class 10, add to worklist
+            //      • Merge b→c: winner is class 5, add to worklist (now 10→5 in union-find)
+            //      • Both class 10 and class 5 are in the worklist, but point to SAME canonical class!
+            //
+            //    So repair processes each level TWICE:
+            //      1. Process class 10 (redirects to 5): merges 5 i(...) parents → adds class 6
+            //      2. Process class 5: tries to merge already-merged i(...) parents (no-op)
+            //      3. Process class 6 (redirects to 1): merges 5 h(...) parents → adds class 2
+            //      4. Process class 1: tries to merge already-merged h(...) parents (no-op)
+            //      5. Process class 2: merges 5 g(...) parents → adds class 3 (no duplicate)
+            //      6. Process class 3: merges 5 f(...) parents → adds class 4 (no duplicate)
+            //      7. Process class 4: merges 5 x(...) nodes (root level)
+            //
+            //    The first 2 levels get duplicated worklist entries, later levels don't.
+            //    This is why we see 7 snapshots instead of 5.
+            //
+            // SUMMARY: 4 compact + 7 repair = 11 rebuild timesteps
+
+            expect(compactCount).toBe(4); // We merged a,b,d,e into c
+            expect(repairCount).toBe(7); // Includes duplicates from worklist aliasing
+            expect(compactCount + repairCount).toBe(11); // Total rebuild timesteps
+        });
+
+        it('should process all rules against e-class batches, not batch per rule', async () => {
+            const engine = new TimelineEngine();
+            const nestedFunctionsPreset: PresetConfig = {
+                id: "nested-functions",
+                label: "Nested Functions",
+                description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
+                root: {
+                    op: "x",
+                    args: [
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["a"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["b"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["c"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["d"] }] }] }] },
+                        { op: "f", args: [{ op: "g", args: [{ op: "h", args: [{ op: "i", args: ["e"] }] }] }] },
+                    ],
+                },
+                rewrites: [
+                    { name: "a-to-c", lhs: "a", rhs: "c", enabled: true },
+                    { name: "b-to-c", lhs: "b", rhs: "c", enabled: true },
+                    { name: "d-to-c", lhs: "d", rhs: "c", enabled: true },
+                    { name: "e-to-c", lhs: "e", rhs: "c", enabled: true },
+                ],
+            };
+
+            engine.loadPreset(nestedFunctionsPreset, {
+                iterationCap: 10,
+                implementation: 'deferred',
+                parallelism: 5
+            });
+            const timeline = await engine.runUntilHalt();
+
+            // Get the initial state to count e-classes
+            const initState = timeline.states.find(s => s.phase === 'init');
+            expect(initState).toBeDefined();
+            const totalEClasses = initState!.eclasses.length;
+
+            console.log(`Total e-classes: ${totalEClasses}`);
+
+            // Count all read-batch snapshots in the first iteration
+            // (before the first 'write' phase)
+            const firstWriteIndex = timeline.states.findIndex(s => s.phase === 'write');
+            const firstIterationStates = timeline.states.slice(0, firstWriteIndex);
+            const readBatchSnapshots = firstIterationStates.filter(s => s.phase === 'read-batch');
+
+            console.log(`Read-batch snapshots: ${readBatchSnapshots.length}`);
+
+            // Expected number of batches should be ceil(totalEClasses / parallelism)
+            // NOT ceil(totalEClasses / parallelism) * numRules
+            const expectedBatches = Math.ceil(totalEClasses / 5);
+
+            console.log(`Expected batches: ${expectedBatches}`);
+            console.log(`Actual batches: ${readBatchSnapshots.length}`);
+
+            // THIS IS THE KEY TEST: We should have one batch per group of e-classes,
+            // not one batch per rule per group of e-classes
+            expect(readBatchSnapshots.length).toBe(expectedBatches);
+        });
+    });
+
     describe('Structural Integrity & Edge Cases', () => {
         it('should deduplicate identical nodes (hashconsing)', async () => {
             const engine = new TimelineEngine();
