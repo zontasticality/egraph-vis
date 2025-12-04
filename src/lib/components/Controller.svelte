@@ -13,8 +13,8 @@
         currentState,
     } from "../stores/timelineStore";
 
-    $: current = $currentIndex;  // Display integer value
-    $: position = $timelinePosition;  // Actual float position
+    $: current = $currentIndex; // Display integer value
+    $: position = $timelinePosition; // Actual float position
     $: total = $timeline ? $timeline.states.length : 0;
     $: max = Math.max(0, total - 1);
 
@@ -74,6 +74,58 @@
     $: phaseInfo = $currentState
         ? phaseDescriptions[$currentState.phase]
         : null;
+
+    // Phase colors (using border colors for vibrancy)
+    const phaseColors: Record<string, string> = {
+        init: "#d1d5db",
+        read: "#fbbf24",
+        write: "#f87171",
+        compact: "#fb923c",
+        repair: "#60a5fa",
+        done: "#10b981",
+    };
+
+    // Generate gradient for seekbar
+    let trackGradient = "linear-gradient(to right, #e5e7eb 0%, #e5e7eb 100%)";
+
+    $: if ($timeline && $timeline.states.length > 0) {
+        const stops: string[] = [];
+        const states = $timeline.states;
+        const n = states.length;
+
+        // Strategy: State-based coloring.
+        // The slider goes from 0 to n-1.
+        // The position p corresponds to state floor(p).
+        // So the segment [i, i+1] corresponds to the duration where state i is active.
+        // We color the segment [i, i+1] with the color of state i.
+
+        // We iterate from 0 to n-2 to define the segments.
+        for (let i = 0; i < n - 1; i++) {
+            const state = states[i];
+            const color = phaseColors[state.phase] || "#e5e7eb";
+            const isReady = !!state.layout;
+            const finalColor = isReady ? color : `${color}4D`; // 30% opacity
+
+            const startPct = (i / (n - 1)) * 100;
+            const endPct = ((i + 1) / (n - 1)) * 100;
+
+            stops.push(`${finalColor} ${startPct}%`);
+            stops.push(`${finalColor} ${endPct}%`);
+        }
+
+        // If there's only 1 state (n=1), the loop doesn't run, which is correct (0 length slider).
+        // But we need at least one stop for valid CSS.
+        if (stops.length === 0 && n > 0) {
+            // Added n > 0 check for safety, though it should be covered by the outer if
+            const color = phaseColors[states[0].phase] || "#e5e7eb";
+            const isReady = !!states[0].layout;
+            const finalColor = isReady ? color : `${color}4D`;
+            stops.push(`${finalColor} 0%`);
+            stops.push(`${finalColor} 100%`);
+        }
+
+        trackGradient = `linear-gradient(to right, ${stops.join(", ")})`;
+    }
 </script>
 
 <div class="controller">
@@ -178,6 +230,7 @@
             on:input={handleSliderInput}
             on:change={handleSliderChange}
             disabled={total === 0}
+            style="--track-gradient: {trackGradient}"
         />
     </div>
 
@@ -232,6 +285,68 @@
     input[type="range"] {
         width: 100%;
         cursor: pointer;
+        -webkit-appearance: none; /* Remove default styling */
+        appearance: none;
+        background: transparent; /* Transparent so we can style the track */
+        height: 24px; /* Height of the touch area */
+    }
+
+    /* Track Styles */
+    input[type="range"]::-webkit-slider-runnable-track {
+        width: 100%;
+        height: 8px;
+        cursor: pointer;
+        background: var(--track-gradient);
+        border-radius: 4px;
+        border: 1px solid #e5e7eb;
+    }
+
+    input[type="range"]::-moz-range-track {
+        width: 100%;
+        height: 8px;
+        cursor: pointer;
+        background: var(--track-gradient);
+        border-radius: 4px;
+        border: 1px solid #e5e7eb;
+    }
+
+    /* Thumb Styles */
+    input[type="range"]::-webkit-slider-thumb {
+        height: 20px;
+        width: 20px;
+        border-radius: 50%;
+        background: #ffffff;
+        border: 2px solid #3b82f6;
+        cursor: pointer;
+        -webkit-appearance: none;
+        margin-top: -7px; /* Center on track (8px track, 20px thumb -> -6px offset, adjusted to -7) */
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        transition: transform 0.1s;
+    }
+
+    input[type="range"]::-moz-range-thumb {
+        height: 20px;
+        width: 20px;
+        border: 2px solid #3b82f6;
+        border-radius: 50%;
+        background: #ffffff;
+        cursor: pointer;
+        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+        transition: transform 0.1s;
+    }
+
+    input[type="range"]:focus::-webkit-slider-thumb {
+        transform: scale(1.1);
+        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+    }
+
+    input[type="range"]:focus::-moz-range-thumb {
+        transform: scale(1.1);
+        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.2);
+    }
+
+    input[type="range"]:focus {
+        outline: none;
     }
 
     .step-count {
@@ -321,10 +436,5 @@
     .btn.primary:hover:not(:disabled) {
         background: #2563eb;
         border-color: #2563eb;
-    }
-
-    input[type="range"] {
-        width: 100%;
-        cursor: pointer;
     }
 </style>
