@@ -127,6 +127,13 @@
         reload();
     }
 
+    function handleTermDisplayKeydown(event: KeyboardEvent) {
+        if (event.key === "Enter" || event.key === " ") {
+            event.preventDefault();
+            handleEditTerm();
+        }
+    }
+
     function toggleParallelismDropdown(event: MouseEvent) {
         event.stopPropagation();
         showImplDropdown = !showImplDropdown;
@@ -326,7 +333,13 @@
             <h1>
                 E-Graph Visualizer
                 {#if currentTermString}
-                    <span class="term-display"
+                    <span
+                        class="term-display"
+                        role="button"
+                        tabindex="0"
+                        title="Edit initial term"
+                        on:click={handleEditTerm}
+                        on:keydown={handleTermDisplayKeydown}
                         >: <code>{currentTermString}</code></span
                     >
                     <button
@@ -553,11 +566,12 @@
     }
 
     .global-header {
-        display: flex;
+        display: grid;
+        grid-template-columns: 1fr 1.6fr 1fr;
         align-items: center;
-        justify-content: space-between;
-        padding: 0 1.5rem;
-        height: 64px;
+        column-gap: 1rem;
+        padding: 0 1rem;
+        height: 58px;
         background: white;
         border-bottom: 1px solid #e5e7eb;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
@@ -570,20 +584,17 @@
     }
 
     .title-section {
-        flex: 1;
         min-width: 0; /* Allow shrinking */
     }
 
     .center-controls {
-        flex: 2;
         justify-content: center;
-        gap: 2rem;
+        gap: 1.25rem;
     }
 
     .right-controls {
-        flex: 1;
         justify-content: flex-end;
-        gap: 1rem;
+        gap: 0.75rem;
     }
 
     h1 {
@@ -603,6 +614,8 @@
         font-size: 1rem;
         display: flex;
         align-items: center;
+        gap: 4px;
+        cursor: pointer;
     }
 
     .term-display code {
@@ -636,11 +649,11 @@
     .preset-group {
         display: flex;
         align-items: center;
-        gap: 8px;
+        gap: 6px;
     }
 
     .preset-selector {
-        padding: 0.5rem 2rem 0.5rem 1rem;
+        padding: 0.45rem 1.6rem 0.45rem 0.9rem;
         border-radius: 0.5rem;
         border: 1px solid #d1d5db;
         background-color: #f9fafb;
@@ -698,10 +711,7 @@
 
     .io-controls {
         display: flex;
-        gap: 8px;
-        margin-right: 12px;
-        padding-right: 12px;
-        border-right: 1px solid #e5e7eb;
+        gap: 6px;
     }
 
     .text-btn {
@@ -711,7 +721,7 @@
         font-weight: 500;
         color: #6b7280;
         cursor: pointer;
-        padding: 4px 8px;
+        padding: 3px 6px;
         border-radius: 4px;
         transition: all 0.2s;
     }
@@ -725,7 +735,7 @@
     .toggle-container {
         display: flex;
         align-items: center;
-        gap: 0.5rem;
+        gap: 0.4rem;
         font-size: 0.9rem;
         font-weight: 500;
         color: #6b7280;
