@@ -62,7 +62,7 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
     algorithm: 'layered',
     direction: 'DOWN',
     nodeSpacing: 40,
-    layerSpacing: 40,
+    layerSpacing: 20,
     containerPadding: {
         top: 8,
         right: 8,
@@ -70,7 +70,7 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
         left: 8,
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
-    edgeRouting: 'ORTHOGONAL',
+    edgeRouting: 'SPLINES',
     portConstraints: 'FREE',
     edgeNodeSpacing: 10,
     edgeEdgeSpacing: 5,

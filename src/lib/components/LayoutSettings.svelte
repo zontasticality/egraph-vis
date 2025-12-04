@@ -25,19 +25,20 @@
     function handleAlgorithmChange(e: Event) {
         const algo = (e.target as HTMLSelectElement).value as LayoutAlgorithm;
 
-        // Load default presets for the selected algorithm to ensure good starting values
-        switch (algo) {
-            case "force":
-                config = { ...FORCE_LAYOUT_CONFIG };
-                break;
-            case "mrtree":
-                config = { ...MRTREE_LAYOUT_CONFIG };
-                break;
-            case "layered":
-            default:
-                config = { ...DEFAULT_LAYOUT_CONFIG };
-                break;
+        // Only change the algorithm and algorithm-specific properties
+        // Preserve user's edge routing and spacing choices
+        config.algorithm = algo;
+
+        // Set algorithm-specific defaults only for the force-specific properties
+        if (algo === "force") {
+            if (!config.force) {
+                config.force = {
+                    iterations: 100,
+                    repulsion: 1.0
+                };
+            }
         }
+
         dispatchChange();
     }
 
