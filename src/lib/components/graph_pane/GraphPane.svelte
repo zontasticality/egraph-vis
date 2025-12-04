@@ -25,6 +25,7 @@
 		getDimensions,
 		getEClassVisuals,
 	} from "./layoutHelpers";
+	import { layoutManager } from "../../engine/layout";
 
 	import FlowENode from "./FlowENode.svelte";
 	import FlowUnionFindGroup from "./FlowUnionFindGroup.svelte";
@@ -104,6 +105,28 @@
 	}
 
 	// --- Layout Logic ---
+
+	/**
+	 * Calculate which handle to use on the target node based on relative positions
+	 */
+	function calculateTargetHandle(sourceNode: Node, targetNode: Node): string {
+		// Get center positions
+		const sourceX = sourceNode.position.x + 25; // Assuming 50px node width
+		const sourceY = sourceNode.position.y + 25;
+		const targetX = targetNode.position.x + (targetNode.data?.width || 100) / 2;
+		const targetY = targetNode.position.y + (targetNode.data?.height || 100) / 2;
+
+		// Calculate angle from target to source
+		const dx = sourceX - targetX;
+		const dy = sourceY - targetY;
+		const angle = Math.atan2(dy, dx) * (180 / Math.PI);
+
+		// Map angle to handle (0° = right, 90° = bottom, 180° = left, -90° = top)
+		if (angle >= -45 && angle < 45) return "right";
+		if (angle >= 45 && angle < 135) return "bottom";
+		if (angle >= 135 || angle < -135) return "left";
+		return "top";
+	}
 
 	function updateLayout(
 		currentState: EGraphState | null,
@@ -386,11 +409,27 @@
 			}
 		}
 
+		// Create a lookup map for nodes by ID for edge handle calculation
+		const nodeMap = new Map<string, Node>();
+		for (const node of newNodes) {
+			nodeMap.set(node.id, node);
+		}
+
 		// Create edges
 		let edgeId = 0;
+		const layoutConfig = layoutManager.getConfig();
+		let edgeType = "smoothstep"; // Default to orthogonal
+
+		if (layoutConfig.edgeRouting === "POLYLINE") {
+			edgeType = "straight";
+		} else if (layoutConfig.edgeRouting === "SPLINES") {
+			edgeType = "default"; // Bezier
+		}
+
 		for (const eclass of state.eclasses) {
 			for (const enode of eclass.nodes) {
 				const sourceId = `node-${enode.id}`;
+				const sourceNode = nodeMap.get(sourceId);
 
 				enode.args.forEach((argClassId, argIndex) => {
 					// In deferred mode: edges point to SET nodes
@@ -402,12 +441,20 @@
 							? `set-${canonicalArgId}`
 							: `class-${canonicalArgId}`;
 
+					const targetNode = nodeMap.get(targetId);
+
+					// Calculate which handle to use on the target based on positions
+					const targetHandle = sourceNode && targetNode
+						? calculateTargetHandle(sourceNode, targetNode)
+						: undefined;
+
 					newEdges.push({
 						id: `edge-${edgeId++}`,
 						source: sourceId,
 						target: targetId,
 						sourceHandle: `port-${enode.id}-${argIndex}`,
-						type: "smoothstep",
+						targetHandle: targetHandle,
+						type: edgeType,
 						animated: false,
 						style: "stroke: #b1b1b7;",
 						markerEnd: {
@@ -446,6 +493,7 @@
 		{nodeTypes}
 		fitView
 		minZoom={0.1}
+		panOnDrag={true}
 		onnodeclick={handleNodeClick}
 		onnodepointerenter={handleNodeMouseEnter}
 		onnodepointerleave={handleNodeMouseLeave}

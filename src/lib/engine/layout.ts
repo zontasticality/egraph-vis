@@ -218,6 +218,11 @@ export class LayoutManager {
                         });
                     }
 
+                    // E-class node (inside set)
+                    // We don't usually connect to these in deferred mode (we connect to the set),
+                    // but we can add ports just in case or for consistency.
+                    // For now, let's only add ports to the top-level containers (Sets) in deferred mode
+                    // to avoid clutter, unless we find we need them here too.
                     setChildren.push({
                         id: `class-${eclass.id}`,
                         children: classChildren,
@@ -229,6 +234,7 @@ export class LayoutManager {
                     });
                 }
 
+                // Union-Find Set node (Top level container)
                 elkNodes.push({
                     id: `set-${canonicalId}`,
                     children: setChildren,
@@ -252,6 +258,7 @@ export class LayoutManager {
                     });
                 }
 
+                // E-class node (Top level container in naive mode)
                 elkNodes.push({
                     id: `class-${eclass.id}`,
                     children: classChildren,
@@ -277,8 +284,7 @@ export class LayoutManager {
                     elkEdges.push({
                         id: `edge-${edgeId++}`,
                         sources: [`node-${node.id}`],
-                        targets: [targetId],
-                        sourcePort: `port-${node.id}-${argIndex}`
+                        targets: [targetId]
                     });
                 });
             }

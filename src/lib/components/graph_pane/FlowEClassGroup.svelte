@@ -68,10 +68,32 @@
     style:--opacity={data.opacity ?? 1.0}
     on:click={handleClick}
 >
-    <!-- Target Handle for incoming edges from arguments -->
+    <!-- Target Handles on all sides for incoming edges -->
     <Handle
+        id="top"
         type="target"
         position={Position.Top}
+        isConnectable={false}
+        style="opacity: 0; pointer-events: none;"
+    />
+    <Handle
+        id="bottom"
+        type="target"
+        position={Position.Bottom}
+        isConnectable={false}
+        style="opacity: 0; pointer-events: none;"
+    />
+    <Handle
+        id="left"
+        type="target"
+        position={Position.Left}
+        isConnectable={false}
+        style="opacity: 0; pointer-events: none;"
+    />
+    <Handle
+        id="right"
+        type="target"
+        position={Position.Right}
         isConnectable={false}
         style="opacity: 0; pointer-events: none;"
     />

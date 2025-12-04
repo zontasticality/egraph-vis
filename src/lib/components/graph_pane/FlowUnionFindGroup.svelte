@@ -45,15 +45,29 @@
     style:--bg-color={backgroundColor}
 >
     <div class="label">{data.label}</div>
-    <!-- Hidden handle for edges pointing to the set -->
+    <!-- Hidden handles on all sides for edges -->
     <Handle
+        id="top"
         type="target"
         position={Position.Top}
         style="opacity: 0; pointer-events: none;"
     />
     <Handle
-        type="source"
+        id="bottom"
+        type="target"
         position={Position.Bottom}
+        style="opacity: 0; pointer-events: none;"
+    />
+    <Handle
+        id="left"
+        type="target"
+        position={Position.Left}
+        style="opacity: 0; pointer-events: none;"
+    />
+    <Handle
+        id="right"
+        type="target"
+        position={Position.Right}
         style="opacity: 0; pointer-events: none;"
     />
 </div>

@@ -118,18 +118,29 @@
 
             <div class="section">
                 <label>
-                    Port Constraints
-                    <select
-                        bind:value={config.portConstraints}
+                    Edge-Node Spacing ({config.edgeNodeSpacing}px)
+                    <input
+                        type="range"
+                        min="0"
+                        max="50"
+                        step="1"
+                        bind:value={config.edgeNodeSpacing}
                         on:change={dispatchChange}
-                    >
-                        <option value="FIXED_ORDER"
-                            >Fixed Order (Default)</option
-                        >
-                        <option value="FIXED_SIDE">Fixed Side</option>
-                        <option value="FREE">Free (Any Side)</option>
-                        <option value="FIXED_RATIO">Fixed Ratio</option>
-                    </select>
+                    />
+                </label>
+            </div>
+
+            <div class="section">
+                <label>
+                    Edge-Edge Spacing ({config.edgeEdgeSpacing}px)
+                    <input
+                        type="range"
+                        min="0"
+                        max="50"
+                        step="1"
+                        bind:value={config.edgeEdgeSpacing}
+                        on:change={dispatchChange}
+                    />
                 </label>
             </div>
 
@@ -218,7 +229,7 @@
             0 4px 6px -1px rgba(0, 0, 0, 0.1),
             0 2px 4px -1px rgba(0, 0, 0, 0.06);
         padding: 1rem;
-        z-index: 50;
+        z-index: 1000;
     }
 
     .section {
@@ -235,6 +246,17 @@
         font-weight: 500;
         color: #374151;
         margin-bottom: 0.25rem;
+    }
+
+    .checkbox-label {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+        cursor: pointer;
+    }
+
+    .checkbox-label input {
+        margin: 0;
     }
 
     select {

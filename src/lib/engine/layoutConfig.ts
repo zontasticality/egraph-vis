@@ -20,6 +20,12 @@ export interface LayoutConfig {
     /** Spacing between layers (for layered algorithm) or levels (for mrtree) */
     layerSpacing: number;
 
+    /** Spacing between edges and nodes */
+    edgeNodeSpacing: number;
+
+    /** Spacing between edges */
+    edgeEdgeSpacing: number;
+
     /** Padding inside containers [top, right, bottom, left] */
     containerPadding: {
         top: number;
@@ -35,7 +41,7 @@ export interface LayoutConfig {
     edgeRouting: 'ORTHOGONAL' | 'POLYLINE' | 'SPLINES';
 
     /** Port constraints */
-    portConstraints: 'UNDEFINED' | 'FREE' | 'FIXED_SIDE' | 'FIXED_ORDER' | 'FIXED_RATIO';
+    portConstraints: 'FREE';
 
     /** Algorithm specific configurations */
     force?: {
@@ -65,7 +71,9 @@ export const DEFAULT_LAYOUT_CONFIG: LayoutConfig = {
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
     edgeRouting: 'ORTHOGONAL',
-    portConstraints: 'FIXED_ORDER',
+    portConstraints: 'FREE',
+    edgeNodeSpacing: 10,
+    edgeEdgeSpacing: 5,
 };
 
 /**
@@ -84,7 +92,9 @@ export const COMPACT_LAYOUT_CONFIG: LayoutConfig = {
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
     edgeRouting: 'ORTHOGONAL',
-    portConstraints: 'FIXED_ORDER',
+    portConstraints: 'FREE',
+    edgeNodeSpacing: 5,
+    edgeEdgeSpacing: 2,
 };
 
 /**
@@ -103,7 +113,9 @@ export const WIDE_LAYOUT_CONFIG: LayoutConfig = {
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
     edgeRouting: 'ORTHOGONAL',
-    portConstraints: 'FIXED_ORDER',
+    portConstraints: 'FREE',
+    edgeNodeSpacing: 15,
+    edgeEdgeSpacing: 10,
 };
 
 /**
@@ -123,6 +135,8 @@ export const FORCE_LAYOUT_CONFIG: LayoutConfig = {
     hierarchyHandling: 'INCLUDE_CHILDREN',
     edgeRouting: 'POLYLINE',
     portConstraints: 'FREE',
+    edgeNodeSpacing: 10,
+    edgeEdgeSpacing: 5,
     force: {
         iterations: 100,
         repulsion: 1.0
@@ -145,7 +159,9 @@ export const MRTREE_LAYOUT_CONFIG: LayoutConfig = {
     },
     hierarchyHandling: 'INCLUDE_CHILDREN',
     edgeRouting: 'ORTHOGONAL',
-    portConstraints: 'FIXED_ORDER',
+    portConstraints: 'FREE',
+    edgeNodeSpacing: 10,
+    edgeEdgeSpacing: 5,
 };
 
 /**
@@ -185,6 +201,8 @@ export function toELKOptions(config: LayoutConfig): Record<string, string> {
         'elk.hierarchyHandling': config.hierarchyHandling,
         'elk.edgeRouting': config.edgeRouting,
         'elk.portConstraints': config.portConstraints,
+        'elk.spacing.edgeNode': config.edgeNodeSpacing.toString(),
+        'elk.spacing.edgeEdge': config.edgeEdgeSpacing.toString(),
     };
 
     // Algorithm specific mapping
