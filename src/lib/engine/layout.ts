@@ -390,6 +390,31 @@ export class LayoutManager {
             }
         }
 
+        // Add alias entries for e-classes themselves (handles merged class positioning)
+        // This applies to both implementations since class IDs remain meaningful in layouts.
+        const eclassAliasSets = new Map<number, number[]>();
+        for (const entry of state.unionFind) {
+            if (!eclassAliasSets.has(entry.canonical)) {
+                eclassAliasSets.set(entry.canonical, []);
+            }
+            eclassAliasSets.get(entry.canonical)!.push(entry.id);
+        }
+
+        for (const [canonical, equivalentIds] of eclassAliasSets) {
+            const canonicalClassId = `class-${canonical}`;
+            const canonicalPos = groups.get(canonicalClassId);
+
+            if (!canonicalPos) continue;
+
+            for (const id of equivalentIds) {
+                if (id === canonical) continue;
+                const aliasClassId = `class-${id}`;
+                if (!groups.has(aliasClassId)) {
+                    groups.set(aliasClassId, { ...canonicalPos });
+                }
+            }
+        }
+
         return { nodes, groups, edges };
     }
 

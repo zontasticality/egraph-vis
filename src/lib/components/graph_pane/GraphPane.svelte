@@ -17,15 +17,15 @@
 	} from "../../stores/timelineStore";
 	import { interactionStore } from "../../stores/interactionStore";
 	import type { EGraphState } from "../../engine/types";
-	import { getColorForId, getLightColorForId } from "../../utils/colors";
-	import { NODE_STYLES, ECLASS_STYLES } from "../../engine/visualStyles";
+	import { getColorForId } from "../../utils/colors";
+	import { ECLASS_STYLES } from "../../engine/visualStyles";
 	import { easeInExpo } from "../../utils/easing";
 	import {
 		getPosition,
-		getDimensions,
 		getEClassVisuals,
 	} from "./layoutHelpers";
 	import { layoutManager } from "../../engine/layout";
+	import { ENODE_LAYOUT } from "../../engine/layoutConfig";
 
 	import FlowENode from "./FlowENode.svelte";
 	import FlowUnionFindGroup from "./FlowUnionFindGroup.svelte";
@@ -223,6 +223,12 @@
 
 		const newNodes: Node[] = [];
 		const newEdges: Edge[] = [];
+		const renderedEdgeSources: Array<{
+			nodeId: number;
+			args: number[];
+			opacity: number;
+			eclassId: number;
+		}> = [];
 
 		// Determine if we should interpolate positions
 		// Keep interpolating all the way to progress = 1.0 to avoid snap-back
@@ -236,42 +242,106 @@
 			: progress;
 		const linearProgress = progress; // Linear for opacity (no easing)
 
-		// Build Flow nodes from state structure
+		const currentEClassMap = new Map<number, typeof state.eclasses[number]>();
+		for (const ec of state.eclasses) {
+			currentEClassMap.set(ec.id, ec);
+		}
 
-		// In deferred mode, group E-Classes by their canonical Union-Find set
-		// In naive mode, render E-Classes directly without union-find grouping
+		const nextEClassMap = new Map<number, typeof state.eclasses[number]>();
+		if (nextState) {
+			for (const ec of nextState.eclasses) {
+				nextEClassMap.set(ec.id, ec);
+			}
+		}
+
+		const currentNodeIds = new Set<number>();
+		state.eclasses.forEach((ec) =>
+			ec.nodes.forEach((n) => currentNodeIds.add(n.id)),
+		);
+
+		const allEClassIds = new Set<number>([
+			...currentEClassMap.keys(),
+			...nextEClassMap.keys(),
+		]);
+
+		const canonicalOf = (id: number, preferNext = false) => {
+			if (preferNext && nextState?.unionFind[id]) {
+				return nextState.unionFind[id].canonical;
+			}
+			if (state.unionFind[id]) {
+				return state.unionFind[id].canonical;
+			}
+			if (nextState?.unionFind[id]) {
+				return nextState.unionFind[id].canonical;
+			}
+			return id;
+		};
+
+		const interpolateGroupPosition = (id: string) => {
+			const currentPos = state.layout!.groups.get(id);
+			const nextPos = nextState?.layout?.groups.get(id);
+
+			if (shouldInterpolate && currentPos && nextPos) {
+				return {
+					x:
+						currentPos.x +
+						(nextPos.x - currentPos.x) * easedProgress,
+					y:
+						currentPos.y +
+						(nextPos.y - currentPos.y) * easedProgress,
+				};
+			}
+			if (currentPos) return { x: currentPos.x, y: currentPos.y };
+			if (nextPos) return { x: nextPos.x, y: nextPos.y };
+			return { x: 0, y: 0 };
+		};
+
+		const interpolateGroupDimensions = (id: string) => {
+			const currentDims = state.layout!.groups.get(id);
+			const nextDims = nextState?.layout?.groups.get(id);
+
+			if (shouldInterpolate && currentDims && nextDims) {
+				return {
+					width:
+						currentDims.width +
+						(nextDims.width - currentDims.width) *
+							easedProgress,
+					height:
+						currentDims.height +
+						(nextDims.height - currentDims.height) *
+							easedProgress,
+				};
+			}
+			if (currentDims)
+				return {
+					width: currentDims.width,
+					height: currentDims.height,
+				};
+			if (nextDims)
+				return {
+					width: nextDims.width,
+					height: nextDims.height,
+				};
+			return { width: 100, height: 100 };
+		};
+
+		// Render union-find sets (deferred implementation) using union of current/next
 		if (state.implementation === "deferred") {
-			// Group eclasses by canonical ID
-			const sets = new Map<number, typeof state.eclasses>();
-			for (const eclass of state.eclasses) {
-				const canonicalId =
-					state.unionFind[eclass.id]?.canonical ?? eclass.id;
-				if (!sets.has(canonicalId)) {
-					sets.set(canonicalId, []);
-				}
-				sets.get(canonicalId)!.push(eclass);
+			const allSetIds = new Set<number>();
+			for (const id of allEClassIds) {
+				const currCanonical = state.unionFind[id]?.canonical;
+				const nextCanonical = nextState?.unionFind[id]?.canonical;
+				if (currCanonical !== undefined) allSetIds.add(currCanonical);
+				if (nextCanonical !== undefined) allSetIds.add(nextCanonical);
 			}
 
-			// Create Flow nodes for each set
-			for (const [canonicalId, eclassesInSet] of sets) {
+			for (const canonicalId of Array.from(allSetIds).sort(
+				(a, b) => a - b,
+			)) {
 				const setId = `set-${canonicalId}`;
-				const setPos = getPosition(
-					setId,
-					false,
-					state,
-					nextState,
-					progress,
-					shouldInterpolate,
-				);
-				const setDims = getDimensions(
-					setId,
-					state,
-					nextState,
-					progress,
-					shouldInterpolate,
-				);
+				const setPos = interpolateGroupPosition(setId);
+				const setDims = interpolateGroupDimensions(setId);
 
-				// Create union-find group node
 				newNodes.push({
 					id: setId,
 					type: "unionFindGroup",
@@ -284,184 +354,206 @@
 					style: `width: ${setDims.width}px; height: ${setDims.height}px; background: transparent; border: none; padding: 0;`,
 					draggable: false,
 				});
-
-				for (const eclass of eclassesInSet) {
-					const classId = `class-${eclass.id}`;
-					const classPos = getPosition(
-						classId,
-						false,
-						state,
-						nextState,
-						progress,
-						shouldInterpolate,
-					);
-					const classDims = getDimensions(
-						classId,
-						state,
-						nextState,
-						progress,
-						shouldInterpolate,
-					);
-					const classVisuals = getEClassVisuals(
-						eclass.id,
-						state,
-						nextState,
-						progress,
-						shouldInterpolate,
-					);
-					const isCanonical = eclass.id === canonicalId;
-
-					// Create e-class group node
-					newNodes.push({
-						id: classId,
-						type: "eclassGroup",
-						position: classPos,
-						parentId: setId,
-						extent: "parent",
-						data: {
-							eclassId: eclass.id,
-							color: classVisuals.color,
-							lightColor: classVisuals.lightColor,
-							opacity: classVisuals.opacity,
-							isCanonical: isCanonical,
-							label: `ID: ${eclass.id}`,
-							nodeIds: eclass.nodes.map((n) => n.id),
-							width: classDims.width,
-							height: classDims.height,
-						},
-						style: `width: ${classDims.width}px; height: ${classDims.height}px; background: transparent; border: none; padding: 0;`,
-						draggable: false,
-					});
-
-					// Create e-node Flow nodes
-					const enodeIdentityColor = getColorForId(eclass.id);
-
-					for (const enode of eclass.nodes) {
-						const nodeId = `node-${enode.id}`;
-						const nodePos = getPosition(
-							nodeId,
-							true,
-							state,
-							nextState,
-							progress,
-							shouldInterpolate,
-						);
-						const visualState = state.visualStates?.nodes.get(
-							enode.id,
-						);
-						const nextVisualState =
-							nextState?.visualStates?.nodes.get(enode.id);
-
-						newNodes.push({
-							id: nodeId,
-							type: "enode",
-							position: nodePos,
-							parentId: classId,
-							extent: "parent",
-							data: {
-								id: enode.id,
-								eclassId: eclass.id,
-								color: enodeIdentityColor,
-								enodeColor: getColorForId(enode.id),
-								args: enode.args,
-								label: enode.op,
-								visualState: visualState,
-								nextVisualState: nextVisualState,
-								progress: easedProgress, // Eased for color interpolation
-								linearProgress: linearProgress, // Linear for opacity
-							},
-							style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
-							draggable: false,
-						});
-					}
-				}
 			}
-		} else {
-			// Naive mode: just e-classes and e-nodes
-			for (const eclass of state.eclasses) {
-				const classId = `class-${eclass.id}`;
-				const classPos = getPosition(
-					classId,
-					false,
+		}
+
+		for (const eclassId of Array.from(allEClassIds).sort(
+			(a, b) => a - b,
+		)) {
+			const currentEClass = currentEClassMap.get(eclassId);
+			const nextEClass = nextEClassMap.get(eclassId);
+
+			const existsCurrent = !!currentEClass;
+			const existsNext = !!nextEClass;
+			const hasTrueNewNodes =
+				existsNext &&
+				nextEClass!.nodes.some((n) => !currentNodeIds.has(n.id));
+
+			let renderMode:
+				| "normal"
+				| "mergeLoser"
+				| "addNodes"
+				| "newClass" = "normal";
+
+			if (existsCurrent && !existsNext) {
+				renderMode = "mergeLoser";
+			} else if (!existsCurrent && existsNext) {
+				renderMode = "newClass";
+			} else if (existsCurrent && existsNext && hasTrueNewNodes) {
+				renderMode = "addNodes";
+			}
+
+			const classId = `class-${eclassId}`;
+			const classPos = interpolateGroupPosition(classId);
+			const classDims = interpolateGroupDimensions(classId);
+			const spawnCenter = {
+				x: classDims.width / 2 - ENODE_LAYOUT.width / 2,
+				y: classDims.height / 2 - ENODE_LAYOUT.height / 2,
+			};
+
+			const classVisuals = (() => {
+				const fallbackNext =
+					nextState?.visualStates?.eclasses.get(eclassId);
+				if (!currentEClass && fallbackNext) {
+					const style = ECLASS_STYLES[fallbackNext.styleClass];
+					return {
+						color: style.borderColor!,
+						lightColor: style.backgroundColor!,
+						opacity: style.opacity ?? 1,
+					};
+				}
+				return getEClassVisuals(
+					eclassId,
 					state,
 					nextState,
 					progress,
 					shouldInterpolate,
 				);
-				const classDims = getDimensions(
-					classId,
-					state,
-					nextState,
-					progress,
-					shouldInterpolate,
+			})();
+
+			const classOpacity =
+				renderMode === "newClass" && shouldInterpolate
+					? linearProgress
+					: classVisuals.opacity;
+
+			const canonicalId = canonicalOf(eclassId);
+			const parentSetId =
+				state.implementation === "deferred"
+					? `set-${canonicalId}`
+					: undefined;
+
+			const nodeIdsForClass = new Set<number>();
+			if (renderMode === "addNodes") {
+				currentEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
+				nextEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
+			} else if (renderMode === "newClass") {
+				nextEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
+			} else {
+				currentEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
+			}
+
+			newNodes.push({
+				id: classId,
+				type: "eclassGroup",
+				position: classPos,
+				parentId: parentSetId,
+				extent: parentSetId ? "parent" : undefined,
+				data: {
+					eclassId: eclassId,
+					color: classVisuals.color,
+					lightColor: classVisuals.lightColor,
+					opacity: classOpacity,
+					isCanonical: eclassId === canonicalId,
+					label: `ID: ${eclassId}`,
+					nodeIds: Array.from(nodeIdsForClass),
+					width: classDims.width,
+					height: classDims.height,
+				},
+				style: `width: ${classDims.width}px; height: ${classDims.height}px; background: transparent; border: none; padding: 0;`,
+				draggable: false,
+			});
+
+			const enodeIdentityColor = getColorForId(eclassId);
+
+			for (const nodeId of nodeIdsForClass) {
+				const currentNode = currentEClass?.nodes.find(
+					(n) => n.id === nodeId,
 				);
-				const classVisuals = getEClassVisuals(
-					eclass.id,
-					state,
-					nextState,
-					progress,
-					shouldInterpolate,
-				);
+				const nextNode = nextEClass?.nodes.find((n) => n.id === nodeId);
+				const isTrueNewNode =
+					!currentNode &&
+					nextNode !== undefined &&
+					!currentNodeIds.has(nodeId);
 
-				// Create e-class group node
-				newNodes.push({
-					id: classId,
-					type: "eclassGroup",
-					position: classPos,
-					data: {
-						eclassId: eclass.id,
-						color: classVisuals.color,
-						lightColor: classVisuals.lightColor,
-						opacity: classVisuals.opacity,
-						isCanonical: true,
-						label: `ID: ${eclass.id}`,
-						nodeIds: eclass.nodes.map((n) => n.id),
-						width: classDims.width,
-						height: classDims.height,
-					},
-					style: `width: ${classDims.width}px; height: ${classDims.height}px; background: transparent; border: none; padding: 0;`,
-					draggable: false,
-				});
-
-				const enodeIdentityColor = getColorForId(eclass.id);
-
-				for (const enode of eclass.nodes) {
-					const nodeId = `node-${enode.id}`;
-					const nodePos = getPosition(
-						nodeId,
+				let nodePos: { x: number; y: number };
+				if (renderMode === "newClass") {
+					const targetPos =
+						nextState?.layout?.nodes.get(nodeId) ?? {
+							x: spawnCenter.x,
+							y: spawnCenter.y,
+						};
+					nodePos = { x: targetPos.x, y: targetPos.y };
+				} else if (renderMode === "addNodes" && isTrueNewNode) {
+					const targetPos =
+						nextState?.layout?.nodes.get(nodeId) ?? {
+							x: spawnCenter.x,
+							y: spawnCenter.y,
+						};
+					nodePos = {
+						x:
+							spawnCenter.x +
+							(targetPos.x - spawnCenter.x) * easedProgress,
+						y:
+							spawnCenter.y +
+							(targetPos.y - spawnCenter.y) * easedProgress,
+					};
+				} else {
+					nodePos = getPosition(
+						`node-${nodeId}`,
 						true,
 						state,
 						nextState,
 						progress,
 						shouldInterpolate,
 					);
-					const visualState = state.visualStates?.nodes.get(enode.id);
-					const nextVisualState = nextState?.visualStates?.nodes.get(
-						enode.id,
-					);
-
-					newNodes.push({
-						id: nodeId,
-						type: "enode",
-						position: nodePos,
-						parentId: classId,
-						extent: "parent",
-						data: {
-							id: enode.id,
-							eclassId: eclass.id,
-							color: enodeIdentityColor,
-							enodeColor: getColorForId(enode.id),
-							args: enode.args,
-							label: enode.op,
-							visualState: visualState,
-							nextVisualState: nextVisualState,
-							progress: easedProgress, // Eased for color interpolation
-							linearProgress: linearProgress, // Linear for opacity
-						},
-						style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
-						draggable: false,
-					});
 				}
+
+				const visualState = state.visualStates?.nodes.get(nodeId);
+				const nextVisualState =
+					nextState?.visualStates?.nodes.get(nodeId);
+
+				const overrideOpacity =
+					renderMode === "newClass"
+						? shouldInterpolate
+							? linearProgress
+							: 1
+						: renderMode === "addNodes" && isTrueNewNode
+							? shouldInterpolate
+								? linearProgress
+								: 1
+							: undefined;
+
+				const argsForNode =
+					nextNode?.args ??
+					currentNode?.args ??
+					(nextEClass?.nodes.find((n) => n.id === nodeId)?.args ??
+						[]);
+
+				const labelForNode =
+					nextNode?.op ??
+					currentNode?.op ??
+					nextEClass?.nodes.find((n) => n.id === nodeId)?.op ??
+					currentNode?.op;
+
+				newNodes.push({
+					id: `node-${nodeId}`,
+					type: "enode",
+					position: nodePos,
+					parentId: classId,
+					extent: "parent",
+					data: {
+						id: nodeId,
+						eclassId: eclassId,
+						color: enodeIdentityColor,
+						enodeColor: getColorForId(nodeId),
+						args: argsForNode,
+						label: labelForNode,
+						visualState: visualState,
+						nextVisualState: nextVisualState,
+						progress: easedProgress, // Eased for color interpolation
+						linearProgress: linearProgress, // Linear for opacity
+						overrideOpacity: overrideOpacity,
+					},
+					style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
+					draggable: false,
+				});
+
+				renderedEdgeSources.push({
+					nodeId,
+					args: argsForNode,
+					opacity: overrideOpacity ?? 1,
+					eclassId,
+				});
 			}
 		}
 
@@ -482,44 +574,38 @@
 			edgeType = "default"; // Bezier
 		}
 
-		for (const eclass of state.eclasses) {
-			for (const enode of eclass.nodes) {
-				const sourceId = `node-${enode.id}`;
-				const sourceNode = nodeMap.get(sourceId);
+		for (const edgeSource of renderedEdgeSources) {
+			const sourceId = `node-${edgeSource.nodeId}`;
+			const sourceNode = nodeMap.get(sourceId);
 
-				enode.args.forEach((argClassId, argIndex) => {
-					// In deferred mode: edges point to SET nodes
-					// In naive mode: edges point to CLASS nodes directly
-					const canonicalArgId =
-						state.unionFind[argClassId]?.canonical ?? argClassId;
-					const targetId =
-						state.implementation === "deferred"
-							? `set-${canonicalArgId}`
-							: `class-${canonicalArgId}`;
+			edgeSource.args.forEach((argClassId, argIndex) => {
+				const canonicalArgId = canonicalOf(argClassId, true);
+				const targetId =
+					state.implementation === "deferred"
+						? `set-${canonicalArgId}`
+						: `class-${canonicalArgId}`;
 
-					const targetNode = nodeMap.get(targetId);
+				const targetNode = nodeMap.get(targetId);
 
-					// Calculate which handle to use on the target based on positions
-					const targetHandle = sourceNode && targetNode
-						? calculateTargetHandle(sourceNode, targetNode, nodeMap)
-						: undefined;
+				const targetHandle = sourceNode && targetNode
+					? calculateTargetHandle(sourceNode, targetNode, nodeMap)
+					: undefined;
 
-					newEdges.push({
-						id: `edge-${edgeId++}`,
-						source: sourceId,
-						target: targetId,
-						sourceHandle: `port-${enode.id}-${argIndex}`,
-						targetHandle: targetHandle,
-						type: edgeType,
-						animated: false,
-						style: "stroke: #b1b1b7;",
-						markerEnd: {
-							type: MarkerType.ArrowClosed,
-							color: "#b1b1b7",
-						},
-					});
+				newEdges.push({
+					id: `edge-${edgeId++}`,
+					source: sourceId,
+					target: targetId,
+					sourceHandle: `port-${edgeSource.nodeId}-${argIndex}`,
+					targetHandle: targetHandle,
+					type: edgeType,
+					animated: false,
+					style: `stroke: #b1b1b7; opacity: ${edgeSource.opacity};`,
+					markerEnd: {
+						type: MarkerType.ArrowClosed,
+						color: "#b1b1b7",
+					},
 				});
-			}
+			});
 		}
 
 		// Update stores

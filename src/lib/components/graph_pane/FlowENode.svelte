@@ -17,6 +17,7 @@
         nextVisualState?: NodeVisualState; // Precomputed next visual state (for interpolation)
         progress?: number; // Eased interpolation progress for colors (0-1)
         linearProgress?: number; // Linear interpolation progress for opacity (0-1)
+        overrideOpacity?: number; // Optional explicit opacity for custom spawn/fade animations
     };
 
     // Helper function to interpolate colors using CSS color-mix
@@ -96,6 +97,7 @@
 
     // Handle opacity for appearing/disappearing nodes
     $: nodeOpacity = (() => {
+        if (data.overrideOpacity !== undefined) return data.overrideOpacity;
         if (!shouldInterpolate) return 1;
 
         // Use linear progress for opacity (not eased) so fade is visible
