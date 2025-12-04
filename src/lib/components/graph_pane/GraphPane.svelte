@@ -242,28 +242,6 @@
 			: progress;
 		const linearProgress = progress; // Linear for opacity (no easing)
 
-		const currentEClassMap = new Map<number, typeof state.eclasses[number]>();
-		for (const ec of state.eclasses) {
-			currentEClassMap.set(ec.id, ec);
-		}
-
-		const nextEClassMap = new Map<number, typeof state.eclasses[number]>();
-		if (nextState) {
-			for (const ec of nextState.eclasses) {
-				nextEClassMap.set(ec.id, ec);
-			}
-		}
-
-		const currentNodeIds = new Set<number>();
-		state.eclasses.forEach((ec) =>
-			ec.nodes.forEach((n) => currentNodeIds.add(n.id)),
-		);
-
-		const allEClassIds = new Set<number>([
-			...currentEClassMap.keys(),
-			...nextEClassMap.keys(),
-		]);
-
 		const canonicalOf = (id: number, preferNext = false) => {
 			if (preferNext && nextState?.unionFind[id]) {
 				return nextState.unionFind[id].canonical;
@@ -276,6 +254,19 @@
 			}
 			return id;
 		};
+		const canonicalMapCurrent = new Map<number, number>();
+		const canonicalMapNext = new Map<number, number>();
+		state.unionFind.forEach((entry) =>
+			canonicalMapCurrent.set(entry.id, entry.canonical),
+		);
+		nextState?.unionFind.forEach((entry) =>
+			canonicalMapNext.set(entry.id, entry.canonical),
+		);
+
+		const allCurrentNodeIds = new Set<number>();
+		state.eclasses.forEach((ec) =>
+			ec.nodes.forEach((n) => allCurrentNodeIds.add(n.id)),
+		);
 
 		const interpolateGroupPosition = (id: string) => {
 			const currentPos = state.layout!.groups.get(id);
@@ -325,14 +316,47 @@
 			return { width: 100, height: 100 };
 		};
 
+		// Group by canonical IDs across current/next to keep logical classes together.
+		type RenderEntry = {
+			canonicalId: number;
+			currentClasses: typeof state.eclasses;
+			nextClasses: typeof state.eclasses;
+		};
+
+		const groupsByCanonical = new Map<number, RenderEntry>();
+
+		const ensureGroup = (canonicalId: number) => {
+			if (!groupsByCanonical.has(canonicalId)) {
+				groupsByCanonical.set(canonicalId, {
+					canonicalId,
+					currentClasses: [],
+					nextClasses: [],
+				});
+			}
+			return groupsByCanonical.get(canonicalId)!;
+		};
+
+		for (const ec of state.eclasses) {
+			const can = canonicalMapCurrent.get(ec.id) ?? ec.id;
+			ensureGroup(can).currentClasses.push(ec);
+		}
+
+		if (nextState) {
+			for (const ec of nextState.eclasses) {
+				const can = canonicalMapNext.get(ec.id) ?? ec.id;
+				ensureGroup(can).nextClasses.push(ec);
+			}
+		}
+
+		const renderEntries = Array.from(groupsByCanonical.values()).sort(
+			(a, b) => a.canonicalId - b.canonicalId,
+		);
+
 		// Render union-find sets (deferred implementation) using union of current/next
 		if (state.implementation === "deferred") {
 			const allSetIds = new Set<number>();
-			for (const id of allEClassIds) {
-				const currCanonical = state.unionFind[id]?.canonical;
-				const nextCanonical = nextState?.unionFind[id]?.canonical;
-				if (currCanonical !== undefined) allSetIds.add(currCanonical);
-				if (nextCanonical !== undefined) allSetIds.add(nextCanonical);
+			for (const entry of renderEntries) {
+				allSetIds.add(entry.canonicalId);
 			}
 
 			for (const canonicalId of Array.from(allSetIds).sort(
@@ -357,17 +381,26 @@
 			}
 		}
 
-		for (const eclassId of Array.from(allEClassIds).sort(
-			(a, b) => a - b,
-		)) {
-			const currentEClass = currentEClassMap.get(eclassId);
-			const nextEClass = nextEClassMap.get(eclassId);
+		for (const entry of renderEntries) {
+			const canonicalId = entry.canonicalId;
+			const currentClasses = entry.currentClasses;
+			const nextClasses = entry.nextClasses;
 
-			const existsCurrent = !!currentEClass;
-			const existsNext = !!nextEClass;
-			const hasTrueNewNodes =
-				existsNext &&
-				nextEClass!.nodes.some((n) => !currentNodeIds.has(n.id));
+			const currentNodeIds = new Set<number>();
+			currentClasses.forEach((ec) =>
+				ec.nodes.forEach((n) => currentNodeIds.add(n.id)),
+			);
+
+			const nextNodeIds = new Set<number>();
+			nextClasses.forEach((ec) =>
+				ec.nodes.forEach((n) => nextNodeIds.add(n.id)),
+			);
+
+			const existsCurrent = currentClasses.length > 0;
+			const existsNext = nextClasses.length > 0;
+			const hasTrueNewNodes = Array.from(nextNodeIds).some(
+				(id) => !allCurrentNodeIds.has(id),
+			);
 
 			let renderMode:
 				| "normal"
@@ -383,7 +416,7 @@
 				renderMode = "addNodes";
 			}
 
-			const classId = `class-${eclassId}`;
+			const classId = `class-${canonicalId}`;
 			const classPos = interpolateGroupPosition(classId);
 			const classDims = interpolateGroupDimensions(classId);
 			const spawnCenter = {
@@ -393,8 +426,8 @@
 
 			const classVisuals = (() => {
 				const fallbackNext =
-					nextState?.visualStates?.eclasses.get(eclassId);
-				if (!currentEClass && fallbackNext) {
+					nextState?.visualStates?.eclasses.get(canonicalId);
+				if (!existsCurrent && fallbackNext) {
 					const style = ECLASS_STYLES[fallbackNext.styleClass];
 					return {
 						color: style.borderColor!,
@@ -403,7 +436,7 @@
 					};
 				}
 				return getEClassVisuals(
-					eclassId,
+					canonicalId,
 					state,
 					nextState,
 					progress,
@@ -416,7 +449,6 @@
 					? linearProgress
 					: classVisuals.opacity;
 
-			const canonicalId = canonicalOf(eclassId);
 			const parentSetId =
 				state.implementation === "deferred"
 					? `set-${canonicalId}`
@@ -424,27 +456,29 @@
 
 			const nodeIdsForClass = new Set<number>();
 			if (renderMode === "addNodes") {
-				currentEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
-				nextEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
+				currentNodeIds.forEach((id) => nodeIdsForClass.add(id));
+				nextNodeIds.forEach((id) => nodeIdsForClass.add(id));
 			} else if (renderMode === "newClass") {
-				nextEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
+				nextNodeIds.forEach((id) => nodeIdsForClass.add(id));
 			} else {
-				currentEClass?.nodes.forEach((n) => nodeIdsForClass.add(n.id));
+				currentNodeIds.forEach((id) => nodeIdsForClass.add(id));
 			}
 
-			newNodes.push({
-				id: classId,
-				type: "eclassGroup",
-				position: classPos,
-				parentId: parentSetId,
-				extent: parentSetId ? "parent" : undefined,
+				const eclassId = canonicalId;
+
+				newNodes.push({
+					id: classId,
+					type: "eclassGroup",
+					position: classPos,
+					parentId: parentSetId,
+					extent: parentSetId ? "parent" : undefined,
 				data: {
 					eclassId: eclassId,
 					color: classVisuals.color,
 					lightColor: classVisuals.lightColor,
 					opacity: classOpacity,
-					isCanonical: eclassId === canonicalId,
-					label: `ID: ${eclassId}`,
+					isCanonical: true,
+					label: `ID: ${canonicalId}`,
 					nodeIds: Array.from(nodeIdsForClass),
 					width: classDims.width,
 					height: classDims.height,
@@ -453,17 +487,35 @@
 				draggable: false,
 			});
 
-			const enodeIdentityColor = getColorForId(eclassId);
+			const enodeIdentityColor = getColorForId(canonicalId);
 
 			for (const nodeId of nodeIdsForClass) {
-				const currentNode = currentEClass?.nodes.find(
-					(n) => n.id === nodeId,
-				);
-				const nextNode = nextEClass?.nodes.find((n) => n.id === nodeId);
+				let currentNode:
+					| { id: number; op: string; args: number[] }
+					| undefined;
+				for (const ec of currentClasses) {
+					const found = ec.nodes.find((n) => n.id === nodeId);
+					if (found) {
+						currentNode = found;
+						break;
+					}
+				}
+
+				let nextNode:
+					| { id: number; op: string; args: number[] }
+					| undefined;
+				for (const ec of nextClasses) {
+					const found = ec.nodes.find((n) => n.id === nodeId);
+					if (found) {
+						nextNode = found;
+						break;
+					}
+				}
+
 				const isTrueNewNode =
 					!currentNode &&
 					nextNode !== undefined &&
-					!currentNodeIds.has(nodeId);
+					!allCurrentNodeIds.has(nodeId);
 
 				let nodePos: { x: number; y: number };
 				if (renderMode === "newClass") {
@@ -499,8 +551,8 @@
 				}
 
 				const visualState = state.visualStates?.nodes.get(nodeId);
-				const nextVisualState =
-					nextState?.visualStates?.nodes.get(nodeId);
+					const nextVisualState =
+						nextState?.visualStates?.nodes.get(nodeId);
 
 				const overrideOpacity =
 					renderMode === "newClass"
@@ -513,17 +565,9 @@
 								: 1
 							: undefined;
 
-				const argsForNode =
-					nextNode?.args ??
-					currentNode?.args ??
-					(nextEClass?.nodes.find((n) => n.id === nodeId)?.args ??
-						[]);
+				const argsForNode = nextNode?.args ?? currentNode?.args ?? [];
 
-				const labelForNode =
-					nextNode?.op ??
-					currentNode?.op ??
-					nextEClass?.nodes.find((n) => n.id === nodeId)?.op ??
-					currentNode?.op;
+				const labelForNode = nextNode?.op ?? currentNode?.op ?? "";
 
 				newNodes.push({
 					id: `node-${nodeId}`,
