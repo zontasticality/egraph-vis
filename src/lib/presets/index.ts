@@ -82,7 +82,7 @@ export const PRESETS: PresetConfig[] = [
     },
     {
         id: "nested-functions",
-        label: "Nested Functions",
+        label: "Nested Functions 5x5 (Deferred Demo)",
         description: "x(f(g(h(i(a)))), f(g(h(i(b)))), f(g(h(i(c)))), f(g(h(i(d)))), f(g(h(i(e)))))",
         root: {
             op: "x",
@@ -119,6 +119,67 @@ export const PRESETS: PresetConfig[] = [
                 rhs: "c",
                 enabled: true,
             },
+        ],
+    },
+    {
+        id: "nested-functions-7x7",
+        label: "Nested Functions 7x7 (Deferred Demo)",
+        description:
+            "x(f(g(h(i(j(k(a)))))), f(g(h(i(j(k(b)))))), f(g(h(i(j(k(c)))))), f(g(h(i(j(k(d)))))), f(g(h(i(j(k(e)))))), f(g(h(i(j(k(f)))))), f(g(h(i(j(k(g)))))))",
+        root: {
+            op: "x",
+            args: [
+                {
+                    op: "f",
+                    args: [
+                        { op: "g", args: [{ op: "h", args: [{ op: "i", args: [{ op: "j", args: [{ op: "k", args: ["a"] }] }] }] }] },
+                    ],
+                },
+                {
+                    op: "f",
+                    args: [
+                        { op: "g", args: [{ op: "h", args: [{ op: "i", args: [{ op: "j", args: [{ op: "k", args: ["b"] }] }] }] }] },
+                    ],
+                },
+                {
+                    op: "f",
+                    args: [
+                        { op: "g", args: [{ op: "h", args: [{ op: "i", args: [{ op: "j", args: [{ op: "k", args: ["c"] }] }] }] }] },
+                    ],
+                },
+                {
+                    op: "f",
+                    args: [
+                        { op: "g", args: [{ op: "h", args: [{ op: "i", args: [{ op: "j", args: [{ op: "k", args: ["d"] }] }] }] }] },
+                    ],
+                },
+                {
+                    op: "f",
+                    args: [
+                        { op: "g", args: [{ op: "h", args: [{ op: "i", args: [{ op: "j", args: [{ op: "k", args: ["e"] }] }] }] }] },
+                    ],
+                },
+                {
+                    op: "f",
+                    args: [
+                        { op: "g", args: [{ op: "h", args: [{ op: "i", args: [{ op: "j", args: [{ op: "k", args: ["f"] }] }] }] }] },
+                    ],
+                },
+                {
+                    op: "f",
+                    args: [
+                        { op: "g", args: [{ op: "h", args: [{ op: "i", args: [{ op: "j", args: [{ op: "k", args: ["g"] }] }] }] }] },
+                    ],
+                },
+            ],
+        },
+        rewrites: [
+            { name: "a-to-c", lhs: "a", rhs: "c", enabled: true },
+            { name: "b-to-c", lhs: "b", rhs: "c", enabled: true },
+            { name: "d-to-c", lhs: "d", rhs: "c", enabled: true },
+            { name: "e-to-c", lhs: "e", rhs: "c", enabled: true },
+            { name: "f-to-c", lhs: "f", rhs: "c", enabled: true },
+            { name: "g-to-c", lhs: "g", rhs: "c", enabled: true },
         ],
     },
     {
