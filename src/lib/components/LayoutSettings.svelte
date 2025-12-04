@@ -15,12 +15,22 @@
         change: LayoutConfig;
     }>();
 
+    const STORAGE_KEY = "egraph-vis-layout-config";
     let config: LayoutConfig = { ...DEFAULT_LAYOUT_CONFIG };
     let isOpen = false;
 
     onMount(() => {
+        // Get current config from layoutManager (which may have loaded from localStorage)
         config = { ...layoutManager.getConfig() };
     });
+
+    function saveConfigToStorage(cfg: LayoutConfig) {
+        try {
+            localStorage.setItem(STORAGE_KEY, JSON.stringify(cfg));
+        } catch (e) {
+            console.error("Failed to save layout config to storage:", e);
+        }
+    }
 
     function handleAlgorithmChange(e: Event) {
         const algo = (e.target as HTMLSelectElement).value as LayoutAlgorithm;
@@ -43,7 +53,32 @@
     }
 
     function dispatchChange() {
+        saveConfigToStorage(config);
         dispatch("change", config);
+    }
+
+    function revertProperty(property: keyof LayoutConfig) {
+        const defaultValue = DEFAULT_LAYOUT_CONFIG[property];
+        if (defaultValue !== undefined) {
+            (config as any)[property] =
+                typeof defaultValue === 'object' && !Array.isArray(defaultValue)
+                    ? { ...defaultValue }
+                    : defaultValue;
+            dispatchChange();
+        }
+    }
+
+    function isAtDefault(property: keyof LayoutConfig): boolean {
+        const currentValue = config[property];
+        const defaultValue = DEFAULT_LAYOUT_CONFIG[property];
+
+        // Handle nested objects like 'force'
+        if (typeof currentValue === 'object' && currentValue !== null &&
+            typeof defaultValue === 'object' && defaultValue !== null) {
+            return JSON.stringify(currentValue) === JSON.stringify(defaultValue);
+        }
+
+        return currentValue === defaultValue;
     }
 
     function toggleOpen() {
@@ -59,8 +94,8 @@
     {#if isOpen}
         <div class="popover">
             <div class="section">
-                <label>
-                    Algorithm
+                <label>Algorithm</label>
+                <div class="input-row">
                     <select
                         value={config.algorithm}
                         on:change={handleAlgorithmChange}
@@ -69,12 +104,21 @@
                         <option value="mrtree">Mr. Tree (Tree)</option>
                         <option value="force">Force Directed</option>
                     </select>
-                </label>
+                    <button
+                        class="revert-btn"
+                        on:click={() => revertProperty("algorithm")}
+                        disabled={isAtDefault("algorithm")}
+                        title="Reset to default"
+                        aria-label="Reset algorithm to default"
+                    >
+                        ↺
+                    </button>
+                </div>
             </div>
 
             <div class="section">
-                <label>
-                    Direction
+                <label>Direction</label>
+                <div class="input-row">
                     <select
                         bind:value={config.direction}
                         on:change={dispatchChange}
@@ -84,12 +128,21 @@
                         <option value="RIGHT">Right</option>
                         <option value="LEFT">Left</option>
                     </select>
-                </label>
+                    <button
+                        class="revert-btn"
+                        on:click={() => revertProperty("direction")}
+                        disabled={isAtDefault("direction")}
+                        title="Reset to default"
+                        aria-label="Reset direction to default"
+                    >
+                        ↺
+                    </button>
+                </div>
             </div>
 
             <div class="section">
-                <label>
-                    Node Spacing ({config.nodeSpacing}px)
+                <label>Node Spacing ({config.nodeSpacing}px)</label>
+                <div class="input-row">
                     <input
                         type="range"
                         min="10"
@@ -98,28 +151,44 @@
                         bind:value={config.nodeSpacing}
                         on:change={dispatchChange}
                     />
-                </label>
+                    <button
+                        class="revert-btn"
+                        on:click={() => revertProperty("nodeSpacing")}
+                        disabled={isAtDefault("nodeSpacing")}
+                        title="Reset to default"
+                        aria-label="Reset node spacing to default"
+                    >
+                        ↺
+                    </button>
+                </div>
             </div>
 
             <div class="section">
-                <label>
-                    Edge Routing
+                <label>Edge Routing</label>
+                <div class="input-row">
                     <select
                         bind:value={config.edgeRouting}
                         on:change={dispatchChange}
                     >
-                        <option value="ORTHOGONAL"
-                            >Orthogonal (Right Angles)</option
-                        >
+                        <option value="ORTHOGONAL">Orthogonal (Right Angles)</option>
                         <option value="POLYLINE">Polyline (Straight)</option>
                         <option value="SPLINES">Splines (Curved)</option>
                     </select>
-                </label>
+                    <button
+                        class="revert-btn"
+                        on:click={() => revertProperty("edgeRouting")}
+                        disabled={isAtDefault("edgeRouting")}
+                        title="Reset to default"
+                        aria-label="Reset edge routing to default"
+                    >
+                        ↺
+                    </button>
+                </div>
             </div>
 
             <div class="section">
-                <label>
-                    Edge-Node Spacing ({config.edgeNodeSpacing}px)
+                <label>Edge-Node Spacing ({config.edgeNodeSpacing}px)</label>
+                <div class="input-row">
                     <input
                         type="range"
                         min="0"
@@ -128,12 +197,21 @@
                         bind:value={config.edgeNodeSpacing}
                         on:change={dispatchChange}
                     />
-                </label>
+                    <button
+                        class="revert-btn"
+                        on:click={() => revertProperty("edgeNodeSpacing")}
+                        disabled={isAtDefault("edgeNodeSpacing")}
+                        title="Reset to default"
+                        aria-label="Reset edge-node spacing to default"
+                    >
+                        ↺
+                    </button>
+                </div>
             </div>
 
             <div class="section">
-                <label>
-                    Edge-Edge Spacing ({config.edgeEdgeSpacing}px)
+                <label>Edge-Edge Spacing ({config.edgeEdgeSpacing}px)</label>
+                <div class="input-row">
                     <input
                         type="range"
                         min="0"
@@ -142,13 +220,22 @@
                         bind:value={config.edgeEdgeSpacing}
                         on:change={dispatchChange}
                     />
-                </label>
+                    <button
+                        class="revert-btn"
+                        on:click={() => revertProperty("edgeEdgeSpacing")}
+                        disabled={isAtDefault("edgeEdgeSpacing")}
+                        title="Reset to default"
+                        aria-label="Reset edge-edge spacing to default"
+                    >
+                        ↺
+                    </button>
+                </div>
             </div>
 
             {#if config.algorithm === "layered" || config.algorithm === "mrtree"}
                 <div class="section">
-                    <label>
-                        Layer Spacing ({config.layerSpacing}px)
+                    <label>Layer Spacing ({config.layerSpacing}px)</label>
+                    <div class="input-row">
                         <input
                             type="range"
                             min="10"
@@ -157,14 +244,23 @@
                             bind:value={config.layerSpacing}
                             on:change={dispatchChange}
                         />
-                    </label>
+                        <button
+                            class="revert-btn"
+                            on:click={() => revertProperty("layerSpacing")}
+                            disabled={isAtDefault("layerSpacing")}
+                            title="Reset to default"
+                            aria-label="Reset layer spacing to default"
+                        >
+                            ↺
+                        </button>
+                    </div>
                 </div>
             {/if}
 
             {#if config.algorithm === "force" && config.force}
                 <div class="section">
-                    <label>
-                        Iterations ({config.force.iterations})
+                    <label>Iterations ({config.force.iterations})</label>
+                    <div class="input-row">
                         <input
                             type="range"
                             min="50"
@@ -173,11 +269,20 @@
                             bind:value={config.force.iterations}
                             on:change={dispatchChange}
                         />
-                    </label>
+                        <button
+                            class="revert-btn"
+                            on:click={() => revertProperty("force")}
+                            disabled={isAtDefault("force")}
+                            title="Reset to default"
+                            aria-label="Reset force settings to default"
+                        >
+                            ↺
+                        </button>
+                    </div>
                 </div>
                 <div class="section">
-                    <label>
-                        Repulsion ({config.force.repulsion})
+                    <label>Repulsion ({config.force.repulsion})</label>
+                    <div class="input-row">
                         <input
                             type="range"
                             min="0.1"
@@ -186,7 +291,16 @@
                             bind:value={config.force.repulsion}
                             on:change={dispatchChange}
                         />
-                    </label>
+                        <button
+                            class="revert-btn"
+                            on:click={() => revertProperty("force")}
+                            disabled={isAtDefault("force")}
+                            title="Reset to default"
+                            aria-label="Reset force settings to default"
+                        >
+                            ↺
+                        </button>
+                    </div>
                 </div>
             {/if}
         </div>
@@ -249,8 +363,45 @@
         margin-bottom: 0.25rem;
     }
 
+    .input-row {
+        display: flex;
+        align-items: center;
+        gap: 0.5rem;
+    }
+
+    .revert-btn {
+        background: none;
+        border: none;
+        border-radius: 4px;
+        width: 24px;
+        height: 24px;
+        font-size: 1.1rem;
+        color: #6b7280;
+        cursor: pointer;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        transition: all 0.15s;
+        flex-shrink: 0;
+    }
+
+    .revert-btn:not(:disabled):hover {
+        background-color: #f3f4f6;
+        color: #374151;
+    }
+
+    .revert-btn:not(:disabled):active {
+        background-color: #e5e7eb;
+    }
+
+    .revert-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
     select {
-        width: 100%;
+        flex: 1;
         padding: 0.375rem;
         font-size: 0.85rem;
         border: 1px solid #d1d5db;
@@ -259,7 +410,6 @@
     }
 
     input[type="range"] {
-        width: 100%;
-        margin-top: 0.25rem;
+        flex: 1;
     }
 </style>

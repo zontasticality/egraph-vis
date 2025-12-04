@@ -399,5 +399,23 @@ export class LayoutManager {
     }
 }
 
-// Global singleton instance
-export const layoutManager = new LayoutManager();
+/**
+ * Load layout config from localStorage if available
+ */
+function loadConfigFromStorage(): LayoutConfig | null {
+    if (typeof localStorage === 'undefined') return null;
+
+    try {
+        const stored = localStorage.getItem('egraph-vis-layout-config');
+        if (stored) {
+            return JSON.parse(stored);
+        }
+    } catch (e) {
+        console.error('Failed to load layout config from storage:', e);
+    }
+    return null;
+}
+
+// Global singleton instance - initialize with saved config if available
+const savedConfig = loadConfigFromStorage();
+export const layoutManager = new LayoutManager(savedConfig || DEFAULT_LAYOUT_CONFIG);
