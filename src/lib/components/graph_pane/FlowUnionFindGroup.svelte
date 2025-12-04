@@ -45,30 +45,62 @@
     style:--bg-color={backgroundColor}
 >
     <div class="label">{data.label}</div>
-    <!-- Hidden handles on all sides for edges -->
+    <!-- Hidden handles in 8 directions for organic edge connections -->
+    <!-- North (Top Center) -->
     <Handle
-        id="top"
+        id="n"
         type="target"
         position={Position.Top}
-        style="opacity: 0; pointer-events: none;"
+        style="opacity: 0; pointer-events: none; left: 50%;"
     />
+    <!-- North-East (Top Right) -->
     <Handle
-        id="bottom"
+        id="ne"
         type="target"
-        position={Position.Bottom}
-        style="opacity: 0; pointer-events: none;"
+        position={Position.Top}
+        style="opacity: 0; pointer-events: none; left: 85%;"
     />
+    <!-- East (Right Center) -->
     <Handle
-        id="left"
-        type="target"
-        position={Position.Left}
-        style="opacity: 0; pointer-events: none;"
-    />
-    <Handle
-        id="right"
+        id="e"
         type="target"
         position={Position.Right}
-        style="opacity: 0; pointer-events: none;"
+        style="opacity: 0; pointer-events: none; top: 50%;"
+    />
+    <!-- South-East (Bottom Right) -->
+    <Handle
+        id="se"
+        type="target"
+        position={Position.Bottom}
+        style="opacity: 0; pointer-events: none; left: 85%;"
+    />
+    <!-- South (Bottom Center) -->
+    <Handle
+        id="s"
+        type="target"
+        position={Position.Bottom}
+        style="opacity: 0; pointer-events: none; left: 50%;"
+    />
+    <!-- South-West (Bottom Left) -->
+    <Handle
+        id="sw"
+        type="target"
+        position={Position.Bottom}
+        style="opacity: 0; pointer-events: none; left: 15%;"
+    />
+    <!-- West (Left Center) -->
+    <Handle
+        id="w"
+        type="target"
+        position={Position.Left}
+        style="opacity: 0; pointer-events: none; top: 50%;"
+    />
+    <!-- North-West (Top Left) -->
+    <Handle
+        id="nw"
+        type="target"
+        position={Position.Top}
+        style="opacity: 0; pointer-events: none; left: 15%;"
     />
 </div>
 

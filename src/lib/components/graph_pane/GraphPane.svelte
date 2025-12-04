@@ -172,11 +172,16 @@
 		const dy = sourceCenterY - targetCenterY;
 		const angle = Math.atan2(dy, dx) * (180 / Math.PI);
 
-		// Map angle to handle (0° = right, 90° = bottom, 180° = left, -90° = top)
-		if (angle >= -45 && angle < 45) return "right";
-		if (angle >= 45 && angle < 135) return "bottom";
-		if (angle >= 135 || angle < -135) return "left";
-		return "top";
+		// Map angle to handle in 8 directions (0° = right, 90° = bottom, 180° = left, -90° = top)
+		// Each direction covers 45° (360° / 8)
+		if (angle >= -22.5 && angle < 22.5) return "e";   // East (Right)
+		if (angle >= 22.5 && angle < 67.5) return "se";   // South-East
+		if (angle >= 67.5 && angle < 112.5) return "s";   // South (Bottom)
+		if (angle >= 112.5 && angle < 157.5) return "sw"; // South-West
+		if (angle >= 157.5 || angle < -157.5) return "w"; // West (Left)
+		if (angle >= -157.5 && angle < -112.5) return "nw"; // North-West
+		if (angle >= -112.5 && angle < -67.5) return "n";  // North (Top)
+		return "ne"; // North-East
 	}
 
 	function updateLayout(
