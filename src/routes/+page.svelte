@@ -3,65 +3,71 @@
     import {
         loadPreset,
         timeline as timelineStore,
+        currentPreset,
     } from "$lib/stores/timelineStore";
     import { onMount } from "svelte";
     import { PaneGroup, Pane, PaneResizer } from "paneforge";
-    import { PRESETS } from "$lib/presets";
-
     import GraphPane from "$lib/components/graph_pane/GraphPane.svelte";
     import StatePane from "$lib/components/state_pane/StatePane.svelte";
+    import { getAllPresets, getPresetById } from "$lib/presets";
     import LayoutSettings from "$lib/components/LayoutSettings.svelte";
     import { layoutManager } from "$lib/engine/layout";
     import type { LayoutConfig } from "$lib/engine/layoutConfig";
 
-    // Full example from the paper
-    const demoPreset = {
-        id: "paper-example",
-        label: "Paper Example",
-        description: "Standard example from the egg paper: (a * 2) / 2",
-        root: { op: "/", args: [{ op: "*", args: ["a", "2"] }, "2"] },
-        rewrites: [
-            {
-                name: "mul-to-shift",
-                lhs: { op: "*", args: ["?x", "2"] },
-                rhs: { op: "<<", args: ["?x", "1"] },
-                enabled: true,
-            },
-            {
-                name: "shift-to-mul",
-                lhs: { op: "<<", args: ["?x", "1"] },
-                rhs: { op: "*", args: ["?x", "2"] },
-                enabled: true,
-            },
-            {
-                name: "cancel-div",
-                lhs: { op: "/", args: ["?x", "?x"] },
-                rhs: "1",
-                enabled: true,
-            },
-            {
-                name: "mul-one",
-                lhs: { op: "*", args: ["?x", "1"] },
-                rhs: "?x",
-                enabled: true,
-            },
-            {
-                name: "factor-out-div",
-                lhs: { op: "/", args: [{ op: "*", args: ["?x", "?y"] }, "?z"] },
-                rhs: { op: "*", args: ["?x", { op: "/", args: ["?y", "?z"] }] },
-                enabled: true,
-            },
-        ],
-    };
+    // Preset Editing Imports
+    import {
+        isEditing,
+        draftPreset,
+        isDirty,
+        enterEditMode,
+        exitEditMode,
+        updateDraftRoot,
+        saveAsPreset,
+        revertChanges,
+    } from "$lib/stores/presetEditorStore";
+    import {
+        exportPresets,
+        importPresets,
+        saveUserPreset,
+        deleteUserPreset,
+        isUserPreset,
+    } from "$lib/engine/presetStorage";
+    import { stringifyPattern } from "$lib/engine/parser";
+    import InitialTermEditor from "$lib/components/editors/InitialTermEditor.svelte";
+    import SaveAsDialog from "$lib/components/editors/SaveAsDialog.svelte";
+    import ErrorModal from "$lib/components/editors/ErrorModal.svelte";
 
     let isDeferred = true;
     let paneLayout = [60, 40]; // Default split
     let ready = false;
     let selectedPresetId = "paper-example";
 
+    // Editor State
+    let showTermEditor = false;
+    let showSaveAsDialog = false;
+    let showErrorModal = false;
+    let errorModalTitle = "";
+    let errorModalMessages: string[] = [];
+    let showUnsavedChangesDialog = false;
+    let pendingPresetId: string | null = null;
+
+    // Reactive list of presets
+    $: allPresets = getAllPresets();
+
+    // Derived state for UI
+    $: currentTermString =
+        $isEditing && $draftPreset
+            ? stringifyPattern($draftPreset.root)
+            : $currentPreset
+              ? stringifyPattern($currentPreset.root)
+              : "";
+
     function reload() {
-        const preset =
-            PRESETS.find((p) => p.id === selectedPresetId) || PRESETS[0];
+        const preset = getPresetById(selectedPresetId) || allPresets[0];
+        // If we were editing, we should exit edit mode unless we are reloading the SAME preset we are editing
+        // But usually reload implies a fresh start.
+        // If we just saved, we want to reload with the new data.
+
         loadPreset(preset, {
             implementation: isDeferred ? "deferred" : "naive",
         });
@@ -69,8 +75,35 @@
 
     function handlePresetChange(e: Event) {
         const target = e.target as HTMLSelectElement;
-        selectedPresetId = target.value;
-        reload();
+        const newId = target.value;
+
+        if ($isEditing && $isDirty) {
+            // Prevent immediate change, show confirmation
+            e.preventDefault();
+            // Reset select value visually until confirmed
+            target.value = selectedPresetId;
+            pendingPresetId = newId;
+            showUnsavedChangesDialog = true;
+        } else {
+            selectedPresetId = newId;
+            exitEditMode(); // Clean exit if no changes or not dirty
+            reload();
+        }
+    }
+
+    function confirmDiscardChanges() {
+        if (pendingPresetId) {
+            selectedPresetId = pendingPresetId;
+            exitEditMode();
+            reload();
+        }
+        showUnsavedChangesDialog = false;
+        pendingPresetId = null;
+    }
+
+    function cancelDiscardChanges() {
+        showUnsavedChangesDialog = false;
+        pendingPresetId = null;
     }
 
     function onLayoutChange(sizes: number[]) {
@@ -90,6 +123,109 @@
         await layoutManager.updateConfig(e.detail, $timelineStore);
     }
 
+    // --- Preset Actions ---
+
+    function handleEditTerm() {
+        if (!$currentPreset) return;
+        if (!$isEditing) {
+            enterEditMode($currentPreset);
+        }
+        showTermEditor = true;
+    }
+
+    function handleTermUpdate(e: CustomEvent<any>) {
+        updateDraftRoot(e.detail);
+        showTermEditor = false;
+    }
+
+    function handleRevert() {
+        if ($currentPreset) {
+            revertChanges($currentPreset);
+        }
+    }
+
+    function handleSaveAs() {
+        showSaveAsDialog = true;
+    }
+
+    function handleSaveConfirm(e: CustomEvent<any>) {
+        const { id, label, description } = e.detail;
+        const newPreset = saveAsPreset(id, label, description);
+
+        if (newPreset) {
+            // Force refresh of presets list
+            allPresets = getAllPresets();
+            selectedPresetId = newPreset.id;
+            showSaveAsDialog = false;
+
+            // Reload to reflect changes in the engine
+            reload();
+
+            // Re-enter edit mode for the new preset so user can continue editing if they want
+            // Or maybe we should exit edit mode?
+            // The plan said "No auto-reload when saving current preset", but we just switched IDs potentially.
+            // Let's exit edit mode to be safe and clean.
+            exitEditMode();
+        }
+    }
+
+    function handleDownload() {
+        const presetToDownload =
+            $isEditing && $draftPreset ? $draftPreset : $currentPreset;
+        if (!presetToDownload) return;
+
+        const json = exportPresets([presetToDownload]);
+        downloadJson(json, `${presetToDownload.id}.json`);
+    }
+
+    function handleDownloadAll() {
+        const json = exportPresets(allPresets);
+        downloadJson(json, "egraph-presets.json");
+    }
+
+    function downloadJson(json: string, filename: string) {
+        const blob = new Blob([json], { type: "application/json" });
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url;
+        a.download = filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+    }
+
+    function handleUpload() {
+        const input = document.createElement("input");
+        input.type = "file";
+        input.accept = ".json";
+        input.onchange = async (e) => {
+            const file = (e.target as HTMLInputElement).files?.[0];
+            if (!file) return;
+
+            const text = await file.text();
+            const { presets, errors } = importPresets(text);
+
+            if (errors.length > 0) {
+                errorModalTitle = "Import Errors";
+                errorModalMessages = errors;
+                showErrorModal = true;
+            }
+
+            if (presets.length > 0) {
+                presets.forEach(saveUserPreset);
+                allPresets = getAllPresets(); // Refresh list
+
+                // If single preset imported, switch to it
+                if (presets.length === 1) {
+                    selectedPresetId = presets[0].id;
+                    reload();
+                }
+            }
+        };
+        input.click();
+    }
+
     onMount(() => {
         const saved = localStorage.getItem("egraph-vis-layout");
         if (saved) {
@@ -102,24 +238,118 @@
         ready = true;
         reload();
     });
+
+    // Live update when editing
+    $: if ($isEditing && $draftPreset) {
+        loadPreset($draftPreset, {
+            implementation: isDeferred ? "deferred" : "naive",
+        });
+    }
 </script>
+
+<!-- Modals -->
+{#if showTermEditor && ($draftPreset || $currentPreset)}
+    <InitialTermEditor
+        initialValue={$draftPreset?.root ?? $currentPreset?.root ?? ""}
+        on:save={handleTermUpdate}
+        on:cancel={() => (showTermEditor = false)}
+    />
+{/if}
+
+{#if showSaveAsDialog && ($draftPreset || $currentPreset)}
+    <SaveAsDialog
+        defaultLabel={$draftPreset?.label ?? $currentPreset?.label ?? ""}
+        on:save={handleSaveConfirm}
+        on:cancel={() => (showSaveAsDialog = false)}
+    />
+{/if}
+
+{#if showErrorModal}
+    <ErrorModal
+        title={errorModalTitle}
+        errors={errorModalMessages}
+        on:close={() => (showErrorModal = false)}
+    />
+{/if}
+
+{#if showUnsavedChangesDialog}
+    <div class="modal-backdrop" on:click={cancelDiscardChanges}>
+        <div class="modal-content" on:click|stopPropagation>
+            <h3>Unsaved Changes</h3>
+            <p>You have unsaved changes. Do you want to discard them?</p>
+            <div class="actions">
+                <button class="btn-cancel" on:click={cancelDiscardChanges}
+                    >Cancel</button
+                >
+                <button class="btn-danger" on:click={confirmDiscardChanges}
+                    >Discard Changes</button
+                >
+            </div>
+        </div>
+    </div>
+{/if}
 
 <div class="app-container">
     <header class="global-header">
-        <div class="header-section">
-            <h1>E-Graph Visualizer</h1>
+        <div class="header-section title-section">
+            <h1>
+                E-Graph Visualizer
+                {#if currentTermString}
+                    <span class="term-display"
+                        >: <code>{currentTermString}</code></span
+                    >
+                    <button
+                        class="icon-btn"
+                        on:click={handleEditTerm}
+                        title="Edit initial term">✎</button
+                    >
+                {/if}
+            </h1>
         </div>
 
         <div class="header-section center-controls">
-            <select
-                class="preset-selector"
-                value={selectedPresetId}
-                on:change={handlePresetChange}
-            >
-                {#each PRESETS as preset}
-                    <option value={preset.id}>{preset.label}</option>
-                {/each}
-            </select>
+            <div class="preset-group">
+                <select
+                    class="preset-selector"
+                    value={selectedPresetId}
+                    on:change={handlePresetChange}
+                >
+                    {#each allPresets as preset}
+                        <option value={preset.id}>
+                            {preset.label}
+                            {isUserPreset(preset.id) ? "(User)" : ""}
+                        </option>
+                    {/each}
+                </select>
+
+                <!-- Preset Actions -->
+                <div class="preset-actions">
+                    {#if $isEditing}
+                        <button
+                            class="action-btn"
+                            title="Revert changes"
+                            disabled={!$isDirty}
+                            on:click={handleRevert}
+                        >
+                            ↩
+                        </button>
+                        <button
+                            class="action-btn"
+                            title="Save As..."
+                            on:click={handleSaveAs}
+                        >
+                            💾
+                        </button>
+                    {/if}
+                    <button
+                        class="action-btn"
+                        title="Download Preset"
+                        on:click={handleDownload}
+                    >
+                        ⬇
+                    </button>
+                </div>
+            </div>
 
             <div class="toggle-container">
                 <span class="toggle-label {isDeferred ? '' : 'active'}"
@@ -139,6 +369,18 @@
         </div>
 
         <div class="header-section right-controls">
+            <div class="io-controls">
+                <button
+                    class="text-btn"
+                    on:click={handleUpload}
+                    title="Import Presets">Import</button
+                >
+                <button
+                    class="text-btn"
+                    on:click={handleDownloadAll}
+                    title="Export All Presets">Export All</button
+                >
+            </div>
             <LayoutSettings on:change={handleLayoutConfigChange} />
         </div>
     </header>
@@ -165,6 +407,57 @@
 </div>
 
 <style>
+    /* Modal Styles (Inline for Unsaved Changes) */
+    .modal-backdrop {
+        position: fixed;
+        top: 0;
+        left: 0;
+        width: 100%;
+        height: 100%;
+        background: rgba(0, 0, 0, 0.5);
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        z-index: 2000;
+        backdrop-filter: blur(2px);
+    }
+
+    .modal-content {
+        background: white;
+        padding: 24px;
+        border-radius: 12px;
+        width: 100%;
+        max-width: 400px;
+        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
+    }
+
+    .modal-content h3 {
+        margin: 0 0 12px 0;
+        font-size: 1.1rem;
+        font-weight: 600;
+    }
+
+    .actions {
+        display: flex;
+        justify-content: flex-end;
+        gap: 12px;
+        margin-top: 20px;
+    }
+
+    .btn-danger {
+        background: #ef4444;
+        color: white;
+        border: none;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .btn-danger:hover {
+        background: #dc2626;
+    }
+
+    /* App Styles */
     .app-container {
         display: flex;
         flex-direction: column;
@@ -177,19 +470,12 @@
         display: flex;
         align-items: center;
         justify-content: space-between;
-        padding: 0.75rem 1rem;
-        background-color: #fff;
-        border-bottom: 1px solid #e0e0e0;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.05);
-        z-index: 100;
-        position: relative;
-    }
-
-    .global-header h1 {
-        margin: 0;
-        font-size: 1.25rem;
-        font-weight: 600;
-        color: #333;
+        padding: 0 1.5rem;
+        height: 64px;
+        background: white;
+        border-bottom: 1px solid #e5e7eb;
+        box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
+        z-index: 10;
     }
 
     .header-section {
@@ -197,27 +483,92 @@
         align-items: center;
     }
 
-    .center-controls {
+    .title-section {
         flex: 1;
+        min-width: 0; /* Allow shrinking */
+    }
+
+    .center-controls {
+        flex: 2;
         justify-content: center;
+        gap: 2rem;
     }
 
     .right-controls {
+        flex: 1;
         justify-content: flex-end;
+        gap: 1rem;
     }
 
-    /* Preset Selector */
+    h1 {
+        font-size: 1.25rem;
+        font-weight: 700;
+        color: #111827;
+        margin: 0;
+        white-space: nowrap;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
+    .term-display {
+        font-weight: 400;
+        color: #6b7280;
+        font-size: 1rem;
+        display: flex;
+        align-items: center;
+    }
+
+    .term-display code {
+        background: #f3f4f6;
+        padding: 2px 6px;
+        border-radius: 4px;
+        font-family: "Monaco", "Menlo", monospace;
+        font-size: 0.9rem;
+        color: #4b5563;
+        max-width: 300px;
+        overflow: hidden;
+        text-overflow: ellipsis;
+    }
+
+    .icon-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 1rem;
+        padding: 4px;
+        border-radius: 4px;
+        opacity: 0.5;
+        transition: all 0.2s;
+    }
+
+    .icon-btn:hover {
+        opacity: 1;
+        background: #f3f4f6;
+    }
+
+    .preset-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
     .preset-selector {
-        padding: 0.375rem 0.75rem;
+        padding: 0.5rem 2rem 0.5rem 1rem;
+        border-radius: 0.5rem;
+        border: 1px solid #d1d5db;
+        background-color: #f9fafb;
         font-size: 0.9rem;
         font-weight: 500;
         color: #374151;
-        background: white;
-        border: 1px solid #d1d5db;
-        border-radius: 6px;
         cursor: pointer;
         transition: all 0.2s;
-        margin-right: 1.5rem;
+        appearance: none;
+        background-image: url("data:image/svg+xml,%3csvg xmlns='http://www.w3.org/2000/svg' fill='none' viewBox='0 0 20 20'%3e%3cpath stroke='%236b7280' stroke-linecap='round' stroke-linejoin='round' stroke-width='1.5' d='M6 8l4 4 4-4'/%3e%3c/svg%3e");
+        background-position: right 0.5rem center;
+        background-repeat: no-repeat;
+        background-size: 1.5em 1.5em;
+        min-width: 200px;
     }
 
     .preset-selector:hover {
@@ -228,6 +579,60 @@
         outline: none;
         border-color: #2563eb;
         box-shadow: 0 0 0 3px rgba(37, 99, 235, 0.1);
+    }
+
+    .preset-actions {
+        display: flex;
+        gap: 4px;
+    }
+
+    .action-btn {
+        background: white;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        width: 32px;
+        height: 32px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        cursor: pointer;
+        font-size: 1.1rem;
+        transition: all 0.2s;
+    }
+
+    .action-btn:hover {
+        background: #f3f4f6;
+        border-color: #9ca3af;
+    }
+
+    .action-btn:disabled {
+        opacity: 0.3;
+        cursor: not-allowed;
+    }
+
+    .io-controls {
+        display: flex;
+        gap: 8px;
+        margin-right: 12px;
+        padding-right: 12px;
+        border-right: 1px solid #e5e7eb;
+    }
+
+    .text-btn {
+        background: none;
+        border: none;
+        font-size: 0.85rem;
+        font-weight: 500;
+        color: #6b7280;
+        cursor: pointer;
+        padding: 4px 8px;
+        border-radius: 4px;
+        transition: all 0.2s;
+    }
+
+    .text-btn:hover {
+        color: #111827;
+        background: #f3f4f6;
     }
 
     /* Toggle Switch */
@@ -242,19 +647,18 @@
 
     .toggle-label.active {
         color: #111827;
-        font-weight: 600;
     }
 
     .toggle-switch {
-        position: relative;
         width: 44px;
         height: 24px;
         background: #e5e7eb;
-        border-radius: 999px;
+        border-radius: 12px;
         border: none;
+        position: relative;
         cursor: pointer;
         transition: background 0.2s;
-        padding: 2px;
+        padding: 0;
     }
 
     .toggle-switch.checked {
@@ -262,17 +666,24 @@
     }
 
     .toggle-thumb {
-        display: block;
         width: 20px;
         height: 20px;
         background: white;
         border-radius: 50%;
+        position: absolute;
+        top: 2px;
+        left: 2px;
         transition: transform 0.2s;
         box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
     }
 
     .toggle-switch.checked .toggle-thumb {
         transform: translateX(20px);
+    }
+
+    .toggle-switch:focus {
+        outline: none;
+        box-shadow: 0 0 0 2px rgba(37, 99, 235, 0.2);
     }
 
     .main-content {

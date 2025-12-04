@@ -1,7 +1,15 @@
 <script lang="ts">
     import { currentPreset, currentState } from "../../stores/timelineStore";
+    import {
+        isEditing,
+        draftPreset,
+        enterEditMode,
+        updateDraftRules,
+    } from "../../stores/presetEditorStore";
+    import RewriteRuleEditor from "../editors/RewriteRuleEditor.svelte";
 
     let collapsed = false;
+    let showEditor = false;
 
     // Render expression as simple string
     function renderExpr(expr: any): string {
@@ -23,7 +31,7 @@
 
         // Read phase: Highlight LHS of matched rules (yellow)
         if (phase === "read" && matches.length > 0) {
-            matches.forEach((match) => {
+            matches.forEach((match: any) => {
                 highlights[match.rule] = { lhs: true, rhs: false };
             });
         }
@@ -31,7 +39,7 @@
         // Write phase: Highlight RHS of rules that just fired (red)
         if (phase === "write") {
             const rewrites = $currentState.metadata.diffs.filter(
-                (d) => d.type === "rewrite",
+                (d: any) => d.type === "rewrite",
             );
             rewrites.forEach((rw: any) => {
                 highlights[rw.rule] = { lhs: false, rhs: true };
@@ -40,11 +48,38 @@
 
         return highlights;
     })();
+
+    function handleEdit() {
+        if (!$currentPreset) return;
+
+        // If not already editing, start edit mode
+        if (!$isEditing) {
+            enterEditMode($currentPreset);
+        }
+        showEditor = true;
+    }
+
+    function handleRulesUpdate(e: CustomEvent<any>) {
+        updateDraftRules(e.detail);
+    }
 </script>
+
+{#if showEditor && $draftPreset}
+    <RewriteRuleEditor
+        rules={$draftPreset.rewrites}
+        on:update={handleRulesUpdate}
+        on:close={() => (showEditor = false)}
+    />
+{/if}
 
 <div class="rules-panel" class:collapsed>
     <div class="panel-header">
-        <h3>Rewrite Rules ({$currentPreset?.rewrites.length ?? 0})</h3>
+        <div class="title-group">
+            <h3>Rewrite Rules ({$currentPreset?.rewrites.length ?? 0})</h3>
+            <button class="icon-btn" on:click={handleEdit} title="Edit rules">
+                ✎
+            </button>
+        </div>
         <button
             class="collapse-btn"
             on:click={() => (collapsed = !collapsed)}
@@ -113,10 +148,30 @@
         flex-shrink: 0;
     }
 
+    .title-group {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+    }
+
     .panel-header h3 {
         margin: 0;
         font-size: 13px;
         font-weight: 600;
+    }
+
+    .icon-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 14px;
+        padding: 2px;
+        opacity: 0.6;
+        transition: opacity 0.2s;
+    }
+
+    .icon-btn:hover {
+        opacity: 1;
     }
 
     .collapse-btn {

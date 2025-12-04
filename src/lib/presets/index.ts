@@ -1,4 +1,5 @@
 import type { PresetConfig } from "../engine/types";
+import { loadUserPresets } from "../engine/presetStorage";
 
 export const PRESETS: PresetConfig[] = [
     {
@@ -81,6 +82,25 @@ export const PRESETS: PresetConfig[] = [
     },
 ];
 
+export function getAllPresets(): PresetConfig[] {
+    const userPresets = loadUserPresets();
+    // User presets shadow built-in ones if IDs match
+    // We'll create a map to handle shadowing
+    const presetMap = new Map<string, PresetConfig>();
+
+    // Add built-ins first
+    PRESETS.forEach(p => presetMap.set(p.id, p));
+
+    // Add user presets (overwriting built-ins)
+    userPresets.forEach(p => presetMap.set(p.id, p));
+
+    return Array.from(presetMap.values());
+}
+
+export function isBuiltInPreset(id: string): boolean {
+    return PRESETS.some(p => p.id === id);
+}
+
 export function getPresetById(id: string): PresetConfig | undefined {
-    return PRESETS.find((p) => p.id === id);
+    return getAllPresets().find((p) => p.id === id);
 }
