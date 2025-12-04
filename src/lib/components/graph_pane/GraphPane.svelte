@@ -235,6 +235,8 @@
 		const shouldInterpolate =
 			nextState?.layout && progress > 0.01 && progress < 1.0;
 
+		const includeNext = shouldInterpolate;
+
 		// Apply easing to progress for smoother transitions
 		// Use eased progress for positions/colors, linear progress for opacity
 		const easedProgress = shouldInterpolate
@@ -483,7 +485,7 @@
 			}
 
 			const nextEClassMap = new Map<number, typeof state.eclasses[number]>();
-			if (nextState) {
+			if (nextState && includeNext) {
 				for (const ec of nextState.eclasses) {
 					nextEClassMap.set(ec.id, ec);
 				}
@@ -517,10 +519,15 @@
 						entry.current &&
 						(canonicalMapCurrent.get(entry.current.id) ?? entry.current.id);
 					const nextCan =
+						includeNext &&
 						entry.next &&
 						(canonicalMapNext.get(entry.next.id) ?? entry.next.id);
-					if (currCan !== undefined) allSetIds.add(currCan);
-					if (nextCan !== undefined) allSetIds.add(nextCan);
+					if (typeof currCan === "number" && Number.isFinite(currCan)) {
+						allSetIds.add(currCan);
+					}
+					if (typeof nextCan === "number" && Number.isFinite(nextCan)) {
+						allSetIds.add(nextCan);
+					}
 				}
 
 			for (const canonicalId of Array.from(allSetIds).sort(
@@ -701,6 +708,12 @@
 					const nextVisualState =
 						nextState?.visualStates?.nodes.get(nodeId);
 
+				const newNodeZIndex =
+					(renderMode === "addNodes" && isTrueNewNode) ||
+					renderMode === "newClass"
+						? -1
+						: undefined;
+
 				const overrideOpacity =
 					renderMode === "newClass"
 						? shouldInterpolate
@@ -737,6 +750,7 @@
 					},
 					style: `width: 50px; height: 50px; background: transparent; border: none; padding: 0;`,
 					draggable: false,
+					zIndex: newNodeZIndex,
 				});
 
 				renderedEdgeSources.push({
