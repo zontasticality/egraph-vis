@@ -248,17 +248,6 @@
         margin-bottom: 0.25rem;
     }
 
-    .checkbox-label {
-        display: flex;
-        align-items: center;
-        gap: 0.5rem;
-        cursor: pointer;
-    }
-
-    .checkbox-label input {
-        margin: 0;
-    }
-
     select {
         width: 100%;
         padding: 0.375rem;

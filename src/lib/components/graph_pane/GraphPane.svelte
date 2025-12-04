@@ -108,17 +108,68 @@
 
 	/**
 	 * Calculate which handle to use on the target node based on relative positions
+	 * Needs nodeMap to resolve parent positions for nested nodes
 	 */
-	function calculateTargetHandle(sourceNode: Node, targetNode: Node): string {
-		// Get center positions
-		const sourceX = sourceNode.position.x + 25; // Assuming 50px node width
-		const sourceY = sourceNode.position.y + 25;
-		const targetX = targetNode.position.x + (targetNode.data?.width || 100) / 2;
-		const targetY = targetNode.position.y + (targetNode.data?.height || 100) / 2;
+	function calculateTargetHandle(
+		sourceNode: Node,
+		targetNode: Node,
+		nodeMap: Map<string, Node>
+	): string {
+		// Get absolute center positions
+		// Source node might have a parent, so we need to add parent's position
+		let sourceAbsX = Number(sourceNode.position.x);
+		let sourceAbsY = Number(sourceNode.position.y);
+
+		// If source has a parent, add parent's position to get absolute position
+		if (sourceNode.parentId) {
+			const parent = nodeMap.get(sourceNode.parentId);
+			if (parent) {
+				sourceAbsX += Number(parent.position.x);
+				sourceAbsY += Number(parent.position.y);
+
+				// If parent also has a parent (e-class inside union-find), add that too
+				if (parent.parentId) {
+					const grandparent = nodeMap.get(parent.parentId);
+					if (grandparent) {
+						sourceAbsX += Number(grandparent.position.x);
+						sourceAbsY += Number(grandparent.position.y);
+					}
+				}
+			}
+		}
+
+		// Add half of node size to get center
+		const sourceCenterX = sourceAbsX + 25; // 50px node width / 2
+		const sourceCenterY = sourceAbsY + 25; // 50px node height / 2
+
+		// Target position (containers are already absolute if they're top-level)
+		let targetAbsX = Number(targetNode.position.x);
+		let targetAbsY = Number(targetNode.position.y);
+
+		// If target has a parent, add parent's position
+		if (targetNode.parentId) {
+			const parent = nodeMap.get(targetNode.parentId);
+			if (parent) {
+				targetAbsX += Number(parent.position.x);
+				targetAbsY += Number(parent.position.y);
+
+				// If parent also has a parent, add that too
+				if (parent.parentId) {
+					const grandparent = nodeMap.get(parent.parentId);
+					if (grandparent) {
+						targetAbsX += Number(grandparent.position.x);
+						targetAbsY += Number(grandparent.position.y);
+					}
+				}
+			}
+		}
+
+		const targetCenterX = targetAbsX + ((targetNode.data?.width as number) || 100) / 2;
+		const targetCenterY = targetAbsY + ((targetNode.data?.height as number) || 100) / 2;
 
 		// Calculate angle from target to source
-		const dx = sourceX - targetX;
-		const dy = sourceY - targetY;
+		const dx = sourceCenterX - targetCenterX;
+		const dy = sourceCenterY - targetCenterY;
 		const angle = Math.atan2(dy, dx) * (180 / Math.PI);
 
 		// Map angle to handle (0° = right, 90° = bottom, 180° = left, -90° = top)
@@ -445,7 +496,7 @@
 
 					// Calculate which handle to use on the target based on positions
 					const targetHandle = sourceNode && targetNode
-						? calculateTargetHandle(sourceNode, targetNode)
+						? calculateTargetHandle(sourceNode, targetNode, nodeMap)
 						: undefined;
 
 					newEdges.push({
