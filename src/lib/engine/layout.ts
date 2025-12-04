@@ -45,17 +45,13 @@ export class LayoutManager {
         console.log('[LayoutManager] Updating config:', newConfig);
         this.config = newConfig;
 
-        // Clear existing layouts
+        // Clear existing layouts cache
         this.clear();
 
-        // Reset state layouts to null to trigger loading state in UI
-        for (let i = 0; i < timeline.states.length; i++) {
-            timeline.states[i] = create(timeline.states[i], draft => {
-                draft.layout = undefined;
-            });
-        }
+        // Don't set layouts to undefined here - precomputeAll will handle updates
+        // This prevents the "Computing Layout..." flash when rapidly changing settings
 
-        // Recompute all
+        // Recompute all (returns after first layout is done)
         await this.precomputeAll(timeline);
     }
 
@@ -103,7 +99,7 @@ export class LayoutManager {
                 if (runId !== this.currentRunId) return;
 
                 const prevLayout = this.layouts.get(index - 1);
-                this.startLayoutComputation(index, timeline, prevLayout);
+                this.startLayoutComputation(index, timeline, prevLayout, runId);
             }, 0);
         }
     }
@@ -114,7 +110,8 @@ export class LayoutManager {
     private startLayoutComputation(
         index: number,
         timeline: EGraphTimeline,
-        prevLayout?: LayoutData
+        prevLayout?: LayoutData,
+        runId?: number
     ): void {
         if (this.layouts.has(index) || this.computing.has(index)) return;
 
@@ -124,6 +121,13 @@ export class LayoutManager {
         this.pending.set(index, promise);
 
         promise.then(layout => {
+            // Check if this run was cancelled while computing
+            if (runId !== undefined && runId !== this.currentRunId) {
+                this.pending.delete(index);
+                this.computing.delete(index);
+                return;
+            }
+
             this.layouts.set(index, layout);
 
             // Backfill into state

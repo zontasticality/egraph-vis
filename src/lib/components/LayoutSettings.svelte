@@ -18,6 +18,7 @@
     const STORAGE_KEY = "egraph-vis-layout-config";
     let config: LayoutConfig = { ...DEFAULT_LAYOUT_CONFIG };
     let isOpen = false;
+    let saveTimeout: number | undefined;
 
     onMount(() => {
         // Get current config from layoutManager (which may have loaded from localStorage)
@@ -30,6 +31,14 @@
         } catch (e) {
             console.error("Failed to save layout config to storage:", e);
         }
+    }
+
+    function debouncedSave(cfg: LayoutConfig) {
+        // Debounce localStorage writes to reduce I/O during slider dragging
+        if (saveTimeout) clearTimeout(saveTimeout);
+        saveTimeout = window.setTimeout(() => {
+            saveConfigToStorage(cfg);
+        }, 500);
     }
 
     function handleAlgorithmChange(e: Event) {
@@ -49,10 +58,18 @@
             }
         }
 
-        dispatchChange();
+        // Save immediately for dropdown changes
+        saveConfigToStorage(config);
+        dispatch("change", config);
     }
 
     function dispatchChange() {
+        debouncedSave(config);
+        dispatch("change", config);
+    }
+
+    function handleSelectChange() {
+        // Save immediately for dropdown changes (direction, edge routing)
         saveConfigToStorage(config);
         dispatch("change", config);
     }
@@ -64,7 +81,9 @@
                 typeof defaultValue === 'object' && !Array.isArray(defaultValue)
                     ? { ...defaultValue }
                     : defaultValue;
-            dispatchChange();
+            // Save immediately for revert actions (not debounced)
+            saveConfigToStorage(config);
+            dispatch("change", config);
         }
     }
 
@@ -121,7 +140,7 @@
                 <div class="input-row">
                     <select
                         bind:value={config.direction}
-                        on:change={dispatchChange}
+                        on:change={handleSelectChange}
                     >
                         <option value="DOWN">Down</option>
                         <option value="UP">Up</option>
@@ -168,7 +187,7 @@
                 <div class="input-row">
                     <select
                         bind:value={config.edgeRouting}
-                        on:change={dispatchChange}
+                        on:change={handleSelectChange}
                     >
                         <option value="ORTHOGONAL">Orthogonal (Right Angles)</option>
                         <option value="POLYLINE">Polyline (Straight)</option>
