@@ -113,7 +113,7 @@ function repair(runtime: EGraphRuntime, eclassId: ENodeId) {
 
         // Update hashcons to point to the leader
         // This ensures future addEnode calls find this class
-        runtime.hashcons.set(key, leader);
+        runtime.hashcons.set(key, runtime.find(leader));
     }
 }
 

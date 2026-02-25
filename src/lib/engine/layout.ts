@@ -42,7 +42,6 @@ export class LayoutManager {
      * Update layout configuration and trigger re-computation
      */
     async updateConfig(newConfig: LayoutConfig, timeline: EGraphTimeline): Promise<void> {
-        console.log('[LayoutManager] Updating config:', newConfig);
         this.config = newConfig;
 
         // Clear existing layouts cache
@@ -75,7 +74,6 @@ export class LayoutManager {
         if (timeline.states.length === 0) return;
 
         // SYNC: Compute first layout (required for initial render)
-        console.log('[LayoutManager] Computing first layout synchronously...');
         const firstLayout = await this.computeLayout(timeline.states[0]);
 
         // Check if run was cancelled during await
@@ -87,8 +85,6 @@ export class LayoutManager {
         timeline.states[0] = create(timeline.states[0], draft => {
             draft.layout = firstLayout;
         });
-
-        console.log(`[LayoutManager] First layout complete. Queueing ${timeline.states.length - 1} remaining layouts...`);
 
         // ASYNC: Start computing remaining layouts in background
         // Use setTimeout to avoid blocking the UI thread
@@ -137,11 +133,6 @@ export class LayoutManager {
 
             this.pending.delete(index);
             this.computing.delete(index);
-
-            // Log progress every 10 snapshots
-            if (index % 10 === 0 || index === timeline.states.length - 1) {
-                console.log(`[LayoutManager] Computed ${index + 1}/${timeline.states.length} layouts`);
-            }
 
             // Notify listeners
             this.listeners.forEach(l => l(index));

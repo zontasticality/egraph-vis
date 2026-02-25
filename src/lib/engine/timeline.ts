@@ -223,7 +223,6 @@ export class TimelineEngine implements EGraphEngine {
         this.emitSnapshot('done');
 
         // Compute visual states for all snapshots (Phase 1 of animation system)
-        console.log('[Timeline] Computing visual states for all snapshots...');
         for (let i = 0; i < this.timeline.states.length; i++) {
             const state = this.timeline.states[i];
             const visualStates = computeVisualStates(state);
@@ -300,7 +299,7 @@ export class TimelineEngine implements EGraphEngine {
                 return {
                     id: nodeId,
                     op: n.op,
-                    args: n.args // Keep original args (non-canonical) so UI can detect non-canonical nodes
+                    args: n.args.map(arg => this.runtime.find(arg))
                 };
             }).sort((a, b) => a.op.localeCompare(b.op)), // Sort nodes
             parents: Array.from(runtimeClass.parents.values()).map(p => ({
@@ -370,6 +369,9 @@ export class TimelineEngine implements EGraphEngine {
             currentMatchingNodes?: number[];
         }
     ) {
+        // Clear ViewModel cache since find() results may have changed
+        this.viewModelCache.clear();
+
         const prevState = this.timeline.states[this.timeline.states.length - 1];
 
         // If no previous state, create initial empty state

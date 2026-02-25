@@ -719,6 +719,101 @@ describe('TimelineEngine', () => {
         });
     });
 
+    describe('Node Argument Canonicalization', () => {
+        it('should update node arguments to canonical IDs after rebuild (paper example)', async () => {
+            const engine = new TimelineEngine();
+
+            // Use the paper example preset from presets/index.ts
+            const paperExample = {
+                id: "paper-example",
+                label: "Paper Example",
+                description: "(a * 2) / 2",
+                root: { op: "/", args: [{ op: "*", args: ["a", "2"] }, "2"] },
+                rewrites: [
+                    {
+                        name: "mul-to-shift",
+                        lhs: { op: "*", args: ["?x", "2"] },
+                        rhs: { op: "<<", args: ["?x", "1"] },
+                        enabled: true,
+                    },
+                    {
+                        name: "shift-to-mul",
+                        lhs: { op: "<<", args: ["?x", "1"] },
+                        rhs: { op: "*", args: ["?x", "2"] },
+                        enabled: true,
+                    },
+                    {
+                        name: "cancel-div",
+                        lhs: { op: "/", args: ["?x", "?x"] },
+                        rhs: "1",
+                        enabled: true,
+                    },
+                    {
+                        name: "mul-one",
+                        lhs: { op: "*", args: ["?x", "1"] },
+                        rhs: "?x",
+                        enabled: true,
+                    },
+                    {
+                        name: "factor-out-div",
+                        lhs: { op: "/", args: [{ op: "*", args: ["?x", "?y"] }, "?z"] },
+                        rhs: { op: "*", args: ["?x", { op: "/", args: ["?y", "?z"] }] },
+                        enabled: true,
+                    },
+                ],
+            };
+
+            engine.loadPreset(paperExample, { iterationCap: 10, implementation: 'deferred' });
+            const timeline = await engine.runUntilHalt();
+
+            // Check snapshots after the first rebuild (compact/repair phases)
+            const compactStates = timeline.states.filter(s => s.phase === 'compact');
+            const repairStates = timeline.states.filter(s => s.phase === 'repair');
+
+            expect(compactStates.length).toBeGreaterThan(0);
+            expect(repairStates.length).toBeGreaterThan(0);
+
+            // After rebuild, all node arguments in the ViewModel should point to canonical IDs
+            let foundNonCanonical = false;
+            for (const state of [...compactStates, ...repairStates]) {
+                for (const eclass of state.eclasses) {
+                    for (const node of eclass.nodes) {
+                        for (const argId of node.args) {
+                            const argCanonical = state.unionFind[argId]?.canonical ?? argId;
+
+                            // CRITICAL ASSERTION: Node arguments should always be canonical
+                            // after rebuild phases (compact/repair)
+                            if (argId !== argCanonical) {
+                                if (!foundNonCanonical) {
+                                    console.log('\n=== BUG DETECTED: Non-canonical node arguments ===');
+                                    foundNonCanonical = true;
+                                }
+                                console.log(`  Node ${node.id} (${node.op}(${node.args.join(',')})) in e-class ${eclass.id}`);
+                                console.log(`    Arg ${argId} should be canonical ${argCanonical}`);
+                                console.log(`    Phase: ${state.phase}, Step: ${state.stepIndex}`);
+                            }
+                            expect(argId).toBe(argCanonical);
+                        }
+                    }
+                }
+            }
+
+            // Also check the final state
+            const finalState = timeline.states[timeline.states.length - 1];
+            for (const eclass of finalState.eclasses) {
+                for (const node of eclass.nodes) {
+                    for (const argId of node.args) {
+                        const argCanonical = finalState.unionFind[argId]?.canonical ?? argId;
+                        if (argId !== argCanonical) {
+                            console.log(`FINAL STATE: Node ${node.id} (op: ${node.op}) has non-canonical arg ${argId} -> ${argCanonical}`);
+                        }
+                        expect(argId).toBe(argCanonical);
+                    }
+                }
+            }
+        });
+    });
+
     describe('Structural Integrity & Edge Cases', () => {
         it('should deduplicate identical nodes (hashconsing)', async () => {
             const engine = new TimelineEngine();
@@ -797,6 +892,44 @@ describe('TimelineEngine', () => {
 
             // Both f(...) instances should canonicalize to the same class
             expect(canon0).toBe(canon1);
+        });
+
+        it('should merge f(a) and f(b) via congruence after merging a=b', async () => {
+            const engine = new TimelineEngine();
+            const preset: PresetConfig = {
+                id: 'congruence-repair',
+                label: 'Congruence Repair',
+                description: 'Test that repair merges f(a) and f(b) after a=b',
+                root: {
+                    op: 'list',
+                    args: [
+                        { op: 'f', args: ['a'] },
+                        { op: 'f', args: ['b'] }
+                    ]
+                },
+                rewrites: [
+                    { name: 'a-eq-b', lhs: 'a', rhs: 'b', enabled: true }
+                ]
+            };
+
+            engine.loadPreset(preset, { iterationCap: 10, implementation: 'deferred' });
+            const timeline = await engine.runUntilHalt();
+            const state = timeline.states[timeline.states.length - 1];
+
+            // After merging a=b, congruence closure should merge f(a) with f(b)
+            const listClass = state.eclasses.find(c => c.nodes.some(n => n.op === 'list'))!;
+            const listNode = listClass.nodes.find(n => n.op === 'list')!;
+
+            // Both f(...) args of list should point to the same canonical class
+            const fArg0Canon = state.unionFind[listNode.args[0]]?.canonical ?? listNode.args[0];
+            const fArg1Canon = state.unionFind[listNode.args[1]]?.canonical ?? listNode.args[1];
+            expect(fArg0Canon).toBe(fArg1Canon);
+
+            // Verify hashcons points to canonical ID for the merged f-node key
+            // The f-class should contain both f-nodes
+            const fClass = state.eclasses.find(c => c.nodes.some(n => n.op === 'f'))!;
+            const fNodes = fClass.nodes.filter(n => n.op === 'f');
+            expect(fNodes.length).toBe(2); // Both f(a) and f(b) should be in the same class
         });
 
         it('should handle cycles gracefully (a = f(a))', async () => {

@@ -5,6 +5,7 @@
         parsePattern,
         stringifyPattern,
         validatePattern,
+        collectVariables,
     } from "../../engine/parser";
 
     export let rule: RewriteRule;
@@ -40,6 +41,19 @@
         if (!rhsValidation.valid) {
             rhsError = rhsValidation.error || "Invalid RHS pattern";
             valid = false;
+        }
+
+        // Semantic check: RHS variables must be bound in LHS
+        if (lhsValidation.valid && rhsValidation.valid) {
+            const lhsVars = collectVariables(parsePattern(lhs));
+            const rhsVars = collectVariables(parsePattern(rhs));
+            for (const v of rhsVars) {
+                if (!lhsVars.has(v)) {
+                    rhsError = `Variable "${v}" in RHS not bound in LHS`;
+                    valid = false;
+                    break;
+                }
+            }
         }
 
         if (!name.trim()) {

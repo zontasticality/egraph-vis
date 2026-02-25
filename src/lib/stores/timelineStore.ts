@@ -6,6 +6,7 @@ import { layoutManager } from '../engine/layout';
 // --- Stores ---
 
 export const timeline = writable<EGraphTimeline | null>(null);
+export const engineError = writable<string | null>(null);
 
 // Subscribe to layout updates to force store refresh
 layoutManager.subscribe(() => {
@@ -84,14 +85,20 @@ let playInterval: any = null;
 
 export async function loadPreset(preset: PresetConfig, options: EngineOptions = { implementation: 'deferred', iterationCap: 100 }) {
     stop();
+    engineError.set(null);
     currentPreset.set(preset);
     engine = new TimelineEngine();
     engine.loadPreset(preset, options);
-    const newTimeline = await engine.runUntilHalt();
 
-    timeline.set(newTimeline);
-    timelinePosition.set(0);  // Use float position
-    transitionMode.set('smooth');
+    try {
+        const newTimeline = await engine.runUntilHalt();
+        timeline.set(newTimeline);
+        timelinePosition.set(0);  // Use float position
+        transitionMode.set('smooth');
+    } catch (e: any) {
+        engineError.set(e?.message ?? String(e));
+        timeline.set(null);
+    }
 }
 
 export async function loadPresetById(id: string, options: EngineOptions = { implementation: 'deferred', iterationCap: 100 }) {

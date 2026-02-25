@@ -1,4 +1,5 @@
 import type { Pattern } from './types';
+import { isVariablePattern, isPatternObject } from '../utils/typeGuards';
 
 export function parsePattern(input: string): Pattern {
     const tokens = tokenize(input);
@@ -29,6 +30,24 @@ export function validatePattern(input: string): { valid: boolean; error?: string
     } catch (e: any) {
         return { valid: false, error: e.message };
     }
+}
+
+/**
+ * Recursively collect all variable names (e.g. "?x") from a pattern.
+ */
+export function collectVariables(pattern: Pattern | number): Set<string> {
+    const vars = new Set<string>();
+    function walk(p: Pattern | number) {
+        if (isVariablePattern(p)) {
+            vars.add(p);
+        } else if (isPatternObject(p)) {
+            for (const arg of p.args) {
+                walk(arg);
+            }
+        }
+    }
+    walk(pattern);
+    return vars;
 }
 
 // --- Internal Parser Logic ---
