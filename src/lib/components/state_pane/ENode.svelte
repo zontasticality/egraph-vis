@@ -2,232 +2,156 @@
     import { currentState } from "../../stores/timelineStore";
     import { interactionStore } from "../../stores/interactionStore";
     import { getColorForId, getLightColorForId } from "../../utils/colors";
+    import { NODE_STYLES } from "../../engine/visualStyles";
+    import { NodeStyleClass } from "../../engine/types";
 
+    /** E-class / e-node id. */
     export let id: number;
+    /** `id`: a pill for an id. `symbol`: an e-node `op(args)` chip. */
     export let mode: "id" | "symbol" = "id";
-    export let variant: "default" | "ghost" | "active" | undefined = undefined;
+    /** E-node structure (symbol mode). */
+    export let node: { op: string; args: number[] } | undefined = undefined;
+    /** Visual state of the e-node (symbol mode). */
+    export let styleClass: NodeStyleClass = NodeStyleClass.Default;
 
-    // --- Data Fetching ---
-    // Look up node structure from chunked registry
-    $: node = $currentState?.nodeChunks
-        ? $currentState.nodeChunks[Math.floor(id / 1024)]?.[id % 1024]
-        : undefined;
-
-    // --- Derived State ---
-    $: isCanonical = $currentState?.unionFind[id]?.isCanonical ?? true;
     $: canonicalId = $currentState?.unionFind[id]?.canonical ?? id;
-
+    $: isCanonical = canonicalId === id;
     $: isSelected = $interactionStore.selection?.nodeIds.has(id) ?? false;
-
+    $: hover = $interactionStore.hover;
     $: isHovered =
-        $interactionStore.hover?.type === "eclass" &&
-        $interactionStore.hover.id === canonicalId;
+        (hover?.type === "eclass" && hover.id === canonicalId) ||
+        (hover?.type === "enode" && hover.id === id);
+    $: style = NODE_STYLES[styleClass];
 
-    // Active State Logic
-    $: activeType = (() => {
-        if (!$currentState?.metadata) return false;
-        const { diffs, matches } = $currentState.metadata;
-        const phase = $currentState.phase;
-
-        // Read Phase: Highlight matches (Yellow)
-        if (phase === "read" && matches) {
-            if (matches.some((m) => m.nodes.includes(id))) return "read";
-        }
-
-        // Write Phase: Highlight diffs (Red)
-        if (phase === "write") {
-            if (
-                diffs.some(
-                    (d) =>
-                        (d.type === "add" && d.nodeId === id) ||
-                        (d.type === "merge" &&
-                            (d.winner === id || d.losers.includes(id))),
-                )
-            )
-                return "write";
-        }
-
-        // Compact Phase: Highlight non-canonical (merged) classes being compacted (Orange)
-        if (phase === "compact") {
-            const canonicalId = $currentState.unionFind[id]?.canonical;
-            if (canonicalId !== undefined && canonicalId !== id) {
-                return "compact";
-            }
-        }
-
-        // Repair Phase: Highlight worklist (Blue)
-        if (phase === "repair") {
-            if ($currentState.worklist.includes(id)) return "repair";
-        }
-
-        return false;
-    })();
-
-    $: isActive = !!activeType;
-
-    // Ghost State: If not canonical and not explicitly active
-    $: isGhost = !isCanonical && !isActive;
-
-    // Final Variant Resolution
-    $: effectiveVariant =
-        variant || (isActive ? "active" : isGhost ? "ghost" : "default");
-
-    // --- Interaction ---
     function handleClick(e: MouseEvent) {
         e.stopPropagation();
         interactionStore.selectENode(id);
     }
 
-    function handleMouseEnter(e: MouseEvent) {
-        e.stopPropagation();
-        interactionStore.hover({ type: "eclass", id: canonicalId });
+    function handleEnter() {
+        interactionStore.hover(
+            mode === "symbol"
+                ? { type: "enode", id }
+                : { type: "eclass", id: canonicalId },
+        );
     }
 
-    function handleMouseLeave() {
+    function handleLeave() {
         interactionStore.clearHover();
     }
 </script>
 
-<!-- svelte-ignore a11y-click-events-have-key-events -->
-<!-- svelte-ignore a11y-no-static-element-interactions -->
-<div
-    class="enode mode-{mode} variant-{effectiveVariant} type-{activeType}"
-    class:selected={isSelected}
-    class:hovered={isHovered}
-    on:click={handleClick}
-    on:mouseenter={handleMouseEnter}
-    on:mouseleave={handleMouseLeave}
-    style:--id-color={getColorForId(canonicalId)}
-    style:--id-bg={getLightColorForId(canonicalId)}
->
-    {#if mode === "id"}
-        <span class="pill">{id}</span>
-    {:else if node}
-        <span class="op">{node.op}</span>
-        <span class="args">
-            {#if node.args.length > 0}
-                <span class="paren">(</span>
-                {#each node.args as argId, i}
-                    <svelte:self id={argId} mode="id" />
-                    {#if i < node.args.length - 1}<span class="comma">,</span
-                        >{/if}
-                {/each}
-                <span class="paren">)</span>
-            {/if}
-        </span>
-    {:else}
-        <!-- Fallback if node not found -->
-        <span class="error">?{id}?</span>
-    {/if}
-</div>
+{#if mode === "id"}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <span
+        class="pill"
+        class:ghost={!isCanonical}
+        class:selected={isSelected}
+        class:hovered={isHovered}
+        role="button"
+        tabindex="-1"
+        title={isCanonical ? `e-class ${id}` : `${id} → canonical ${canonicalId}`}
+        style:--id-color={getColorForId(canonicalId)}
+        style:--id-bg={getLightColorForId(canonicalId)}
+        on:click={handleClick}
+        on:mouseenter={handleEnter}
+        on:mouseleave={handleLeave}>{id}</span
+    >
+{:else}
+    <!-- svelte-ignore a11y-click-events-have-key-events -->
+    <span
+        class="symbol"
+        class:selected={isSelected}
+        class:hovered={isHovered}
+        class:dashed={style.dashed}
+        role="button"
+        tabindex="-1"
+        title="e-node #{id}"
+        style:--fill={style.fill}
+        style:--stroke={styleClass === NodeStyleClass.Default
+            ? "#cbd5e1"
+            : style.stroke}
+        style:--text={style.text}
+        on:click={handleClick}
+        on:mouseenter={handleEnter}
+        on:mouseleave={handleLeave}
+    >
+        <span class="op">{node?.op ?? "?"}</span>{#if node && node.args.length > 0}<span
+                class="paren">(</span
+            >{#each node.args as argId, i}<svelte:self
+                    id={argId}
+                    mode="id"
+                />{#if i < node.args.length - 1}<span class="comma">,</span
+                    >{/if}{/each}<span class="paren">)</span>{/if}
+    </span>
+{/if}
 
 <style>
-    .enode {
+    .pill,
+    .symbol {
         display: inline-flex;
         align-items: center;
         cursor: pointer;
-        transition: all 0.1s ease-out;
-        border-radius: 4px;
-        font-family: monospace;
+        font-family: ui-monospace, "SFMono-Regular", Menlo, monospace;
+        transition:
+            box-shadow 0.1s ease-out,
+            background-color 0.15s ease-out;
+        white-space: nowrap;
     }
 
-    /* --- ID Mode --- */
-    .mode-id {
-        padding: 1px 4px;
-        font-size: 0.85rem;
-        font-weight: 600;
-        color: var(--id-color); /* Preserve identity color */
-        background-color: transparent; /* Use state background instead */
-        border: 1px solid var(--id-color); /* Preserve identity border */
+    .pill {
+        padding: 0 5px;
+        min-width: 18px;
+        justify-content: center;
+        font-size: 11px;
+        line-height: 16px;
+        font-weight: 700;
+        color: var(--id-color);
+        background: var(--id-bg);
+        border: 1px solid var(--id-color);
         border-radius: 999px;
-        transition: all 0.1s ease-out;
     }
 
-    /* --- Symbol Mode --- */
-    .mode-symbol {
-        padding: 2px 6px;
-        background: white;
-        border: 2px solid var(--id-color); /* Preserve identity border */
-        color: #374151;
-        gap: 2px;
-        transition: all 0.1s ease-out;
-    }
-
-    /* --- Variants --- */
-    .variant-active {
-        /* Default active color (fallback) */
-        --active-color: #000;
-        --active-bg: #fff;
-    }
-
-    /* Active States - Stage-Dependent Colors */
-    .enode.type-read {
-        background-color: #fef3c7; /* Yellow 100 */
-        border-color: #fbbf24; /* Yellow 400 - override identity */
-    }
-
-    .enode.type-write {
-        background-color: #fecaca; /* Red 100 */
-        border-color: #f87171; /* Red 400 - override identity */
-    }
-
-    .enode.type-compact {
-        background-color: #fed7aa; /* Orange 100 */
-        border-color: #fb923c; /* Orange 400 - override identity */
-    }
-
-    .enode.type-repair {
-        background-color: #dbeafe; /* Blue 100 */
-        border-color: #60a5fa; /* Blue 400 - override identity */
-    }
-
-    .variant-active {
-        border-color: var(--active-color);
-        background: var(--active-bg);
-        color: var(--active-color);
-        box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
-        transform: translateY(-1px);
-        z-index: 10;
-    }
-
-    .variant-ghost {
-        opacity: 0.6;
+    .pill.ghost {
         border-style: dashed;
-        background: #f9fafb;
-        color: #9ca3af;
+        background: white;
+        opacity: 0.75;
     }
 
-    /* --- Interaction States (override active states) --- */
-    .hovered {
-        box-shadow: 0 0 0 2px #93c5fd; /* Ring-2 blue-300 */
-        z-index: 5;
+    .symbol {
+        gap: 1px;
+        padding: 1px 5px;
+        font-size: 11.5px;
+        line-height: 18px;
+        color: var(--text);
+        background: var(--fill);
+        border: 1.5px solid var(--stroke);
+        border-radius: 6px;
     }
 
-    .selected {
-        box-shadow: 0 0 0 2px #2563eb; /* Ring-2 blue-600 */
-        background-color: #eff6ff;
-        border-color: #2563eb; /* Override all other borders */
-        z-index: 20;
+    .symbol.dashed {
+        border-style: dashed;
     }
 
-    /* --- Children --- */
     .op {
-        font-weight: bold;
-    }
-
-    .args {
-        display: inline-flex;
-        align-items: center;
-        gap: 2px;
+        font-weight: 700;
+        margin-right: 1px;
     }
 
     .paren,
     .comma {
-        color: #9ca3af;
+        color: #94a3b8;
     }
 
-    .error {
-        color: red;
-        font-weight: bold;
+    .comma {
+        margin-right: 1px;
+    }
+
+    .hovered {
+        box-shadow: 0 0 0 2px #93c5fd;
+    }
+
+    .selected {
+        box-shadow: 0 0 0 2px #2563eb;
     }
 </style>

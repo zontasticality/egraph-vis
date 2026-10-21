@@ -1,74 +1,89 @@
-import { NodeStyleClass, EClassStyleClass } from './types';
+import { NodeStyleClass, EClassStyleClass, type Phase } from './types';
 
-// Shared style definition structure
-export interface StyleDefinition {
-    borderColor: string;
-    borderWidth: number;
-    borderStyle: 'solid' | 'dashed';
-    backgroundColor: string;
-    textColor: string;
-    opacity?: number;
+/** Appearance of an e-node box. Colors must be hex so they can be interpolated. */
+export interface NodeStyle {
+    fill: string;
+    stroke: string;
+    text: string;
+    dashed: boolean;
+    label: string;
+    description: string;
 }
 
-// Node style definitions - single source of truth
-export const NODE_STYLES: Record<NodeStyleClass, StyleDefinition> = {
+/** Appearance of an e-class box. */
+export interface EClassStyle {
+    fill: string;
+    stroke: string;
+    dashed: boolean;
+    strokeWidth: number;
+    opacity: number;
+    label: string;
+    description: string;
+}
+
+// Node style definitions - single source of truth (graph, state pane and legend)
+export const NODE_STYLES: Record<NodeStyleClass, NodeStyle> = {
     [NodeStyleClass.Default]: {
-        borderColor: '#000000',
-        borderWidth: 2,
-        borderStyle: 'solid',
-        backgroundColor: '#ffffff',
-        textColor: '#374151'
+        fill: '#ffffff', stroke: '#475569', text: '#0f172a', dashed: false,
+        label: 'E-node', description: 'An operator applied to child e-classes'
     },
     [NodeStyleClass.MatchedLHS]: {
-        borderColor: '#facc15',  // Yellow
-        borderWidth: 2,
-        borderStyle: 'solid',
-        backgroundColor: '#facc15',
-        textColor: '#ffffff'
+        fill: '#fde68a', stroke: '#d97706', text: '#78350f', dashed: false,
+        label: 'Matched', description: 'Matched by the left-hand side of a rule'
     },
     [NodeStyleClass.NewNode]: {
-        borderColor: '#ef4444',  // Red
-        borderWidth: 2,
-        borderStyle: 'solid',
-        backgroundColor: '#ef4444',
-        textColor: '#ffffff'
+        fill: '#fecdd3', stroke: '#e11d48', text: '#881337', dashed: false,
+        label: 'Created', description: 'Added by instantiating a right-hand side'
     },
     [NodeStyleClass.NonCanonical]: {
-        borderColor: '#ef4444',  // Red
-        borderWidth: 2,
-        borderStyle: 'dashed',  // Dashed to indicate ghost/non-canonical
-        backgroundColor: '#ffffff',
-        textColor: '#374151'
+        fill: '#ffffff', stroke: '#ea580c', text: '#0f172a', dashed: true,
+        label: 'Stale', description: 'Points at a merged e-class; fixed by repair'
     },
     [NodeStyleClass.ParentNode]: {
-        borderColor: '#3b82f6',  // Blue
-        borderWidth: 2,
-        borderStyle: 'solid',
-        backgroundColor: '#3b82f6',
-        textColor: '#ffffff'
+        fill: '#bfdbfe', stroke: '#2563eb', text: '#1e3a8a', dashed: false,
+        label: 'Repairing', description: 'Parent e-node being re-canonicalized'
     }
 };
 
 // E-Class style definitions
-export const ECLASS_STYLES: Record<EClassStyleClass, Partial<StyleDefinition>> = {
+export const ECLASS_STYLES: Record<EClassStyleClass, EClassStyle> = {
     [EClassStyleClass.Default]: {
-        borderColor: '#9ca3af',  // Gray
-        backgroundColor: 'rgba(156, 163, 175, 0.1)',
-        opacity: 1.0
+        fill: '#f8fafc', stroke: '#94a3b8', dashed: true, strokeWidth: 1.5, opacity: 1,
+        label: 'E-class', description: 'A set of equivalent e-nodes'
     },
     [EClassStyleClass.Active]: {
-        borderColor: '#fb923c',  // Orange
-        backgroundColor: 'rgba(251, 146, 60, 0.1)',
-        opacity: 1.0
+        fill: '#eff6ff', stroke: '#2563eb', dashed: false, strokeWidth: 2.5, opacity: 1,
+        label: 'Active', description: 'Being compacted or repaired right now'
     },
     [EClassStyleClass.InWorklist]: {
-        borderColor: '#3b82f6',  // Blue
-        backgroundColor: 'rgba(59, 130, 246, 0.1)',
-        opacity: 1.0
+        fill: '#f0f9ff', stroke: '#38bdf8', dashed: true, strokeWidth: 2, opacity: 1,
+        label: 'In worklist', description: 'Merged; its parents still need repair'
     },
     [EClassStyleClass.Merged]: {
-        borderColor: '#9ca3af',  // Gray
-        backgroundColor: 'rgba(156, 163, 175, 0.1)',
-        opacity: 0.5  // Faded to indicate merged/non-canonical
+        fill: '#fff7ed', stroke: '#fb923c', dashed: true, strokeWidth: 1.5, opacity: 0.9,
+        label: 'Merged', description: 'Non-canonical; waiting to be compacted'
     }
 };
+
+/** Union-find set container (deferred mode, between a union and compaction). */
+export const SET_STYLE = { fill: '#f5f3ff', stroke: '#a78bfa', label: 'Union-find set', description: 'E-classes unioned but not yet compacted' };
+
+export const EDGE_COLORS = { normal: '#94a3b8', stale: '#ea580c', highlight: '#2563eb' };
+
+/** Phase accent colors (controller track, badges, active e-class outline). */
+export const PHASE_COLORS: Record<Phase, string> = {
+    init: '#9ca3af',
+    read: '#f59e0b',
+    'read-batch': '#fbbf24',
+    write: '#f43f5e',
+    compact: '#f97316',
+    repair: '#3b82f6',
+    done: '#10b981'
+};
+
+/** Active e-class colors depend on which phase is processing it. */
+export function activeClassColors(phase: Phase): { stroke: string; fill: string } {
+    return phase === 'compact'
+        ? { stroke: '#ea580c', fill: '#fff7ed' }
+        : { stroke: '#2563eb', fill: '#eff6ff' };
+}

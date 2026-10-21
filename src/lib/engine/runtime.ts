@@ -23,6 +23,10 @@ export class SeededRandom {
 export class UnionFind {
     private parent: number[] = [];
 
+    get size(): number {
+        return this.parent.length;
+    }
+
     makeSet(id: number) {
         // Ensure array is large enough
         while (this.parent.length <= id) {
@@ -32,15 +36,21 @@ export class UnionFind {
     }
 
     find(id: number): number {
-        if (id >= this.parent.length) {
+        if (!(id >= 0 && id < this.parent.length)) {
             throw new Error(`Unknown ENodeId: ${id}`);
         }
-        if (this.parent[id] === id) {
-            return id;
+        // Iterative find with path compression (no recursion depth limits)
+        let root = id;
+        while (this.parent[root] !== root) {
+            root = this.parent[root];
         }
-        // Path compression
-        this.parent[id] = this.find(this.parent[id]);
-        return this.parent[id];
+        let cur = id;
+        while (this.parent[cur] !== root) {
+            const next = this.parent[cur];
+            this.parent[cur] = root;
+            cur = next;
+        }
+        return root;
     }
 
     union(a: number, b: number, rng?: SeededRandom): number {
@@ -67,7 +77,7 @@ export class UnionFind {
 
     // Helper to export state for snapshots
     toArray(): Array<{ id: number; canonical: number; isCanonical: boolean }> {
-        return this.parent.map((p, id) => {
+        return this.parent.map((_, id) => {
             const canonical = this.find(id);
             return {
                 id,
@@ -78,21 +88,51 @@ export class UnionFind {
     }
 }
 
+/** Result of repairing a single e-class (one step of congruence closure). */
+export interface RepairResult {
+    /** Every parent e-node that was examined. */
+    parentNodes: ENodeId[];
+    /** E-nodes whose stored children were re-canonicalized. */
+    updatedNodes: ENodeId[];
+    /** Pairs of e-classes that were found congruent and merged. */
+    merges: Array<[ENodeId, ENodeId]>;
+    /** Duplicate e-nodes removed after becoming identical to another e-node. */
+    removedNodes: ENodeId[];
+}
+
+/**
+ * Mutable e-graph following the structure of egg (Willsey et al. 2021):
+ * union-find + e-class map + hashcons + worklist, with `merge` (union) and a
+ * `repairClass` step used by rebuilding to restore the congruence and
+ * hashcons invariants.
+ *
+ * E-node IDs double as e-class IDs: every e-node starts in its own e-class
+ * whose ID is the e-node's ID.
+ */
 export class EGraphRuntime {
     unionFind = new UnionFind();
     eclasses = new Map<ENodeId, EClassRuntime>();
+    /** Canonical e-node key -> e-class ID (possibly stale; always `find()` the value). */
     hashcons = new Map<string, ENodeId>();
-    nodes: ENode[] = []; // Registry of all nodes by ID
+    /** Registry of every e-node ever created, indexed by ID, in its *stored* form. */
+    nodes: ENode[] = [];
+    /** E-nodes that were deduplicated away during rebuilding. */
+    removedNodes = new Set<ENodeId>();
     worklist = new Set<ENodeId>();
     nextId = 0;
     diffs: DiffEvent[] = [];
+    /** Bumped on every hashcons mutation so snapshots can share unchanged copies. */
+    hashconsVersion = 0;
+    /** Number of successful unions performed so far. */
+    unionCount = 0;
 
     addEnode(enode: ENode): ENodeId {
         const canonical = this.canonicalize(enode);
         const key = this.canonicalKey(canonical);
 
-        if (this.hashcons.has(key)) {
-            return this.hashcons.get(key)!;
+        const existing = this.hashcons.get(key);
+        if (existing !== undefined) {
+            return this.find(existing);
         }
 
         const id = this.nextId++;
@@ -100,28 +140,39 @@ export class EGraphRuntime {
 
         const newClass: EClassRuntime = {
             id,
-            nodes: [id], // Store ID
+            nodes: [id],
             parents: new Map(),
             version: 0
         };
 
         this.eclasses.set(id, newClass);
         this.hashcons.set(key, id);
+        this.hashconsVersion++;
 
-        // Update parents for children
-        for (const childId of canonical.args) {
+        // Register as a parent of each (distinct) child class
+        for (const childId of new Set(canonical.args)) {
             const childClass = this.eclasses.get(childId);
             if (childClass) {
-                childClass.parents.set(`${id}:${key}`, { parentId: id, enode: canonical });
-                childClass.version++;
+                childClass.parents.set(String(id), { parentId: id, enode: canonical });
             }
         }
 
         this.diffs.push({ type: 'add', nodeId: id, enode: canonical });
-        this.nodes[id] = canonical; // Store node in registry
+        this.nodes[id] = canonical;
         return id;
     }
 
+    /**
+     * Union two e-classes.
+     *
+     * - `naive`: nodes are moved into the winning class immediately and the
+     *   losing class is deleted.
+     * - `deferred`: only the union-find and parent lists are updated; the losing
+     *   class keeps its nodes until it is compacted during rebuild.
+     *
+     * In both modes the winner is pushed onto the worklist so its parents can
+     * be repaired later.
+     */
     merge(a: ENodeId, b: ENodeId, implementation: 'naive' | 'deferred' = 'naive', rng?: SeededRandom): ENodeId {
         const rootA = this.find(a);
         const rootB = this.find(b);
@@ -132,64 +183,123 @@ export class EGraphRuntime {
 
         const winner = this.unionFind.union(rootA, rootB, rng);
         const loser = winner === rootA ? rootB : rootA;
+        this.unionCount++;
 
         const winnerClass = this.eclasses.get(winner)!;
         const loserClass = this.eclasses.get(loser)!;
 
-        // Increment version of winner (it changed)
         winnerClass.version++;
 
-        // IMPORTANT: Increment version of all PARENTS of the loser.
-        // Their canonical args have changed (pointing to loser -> pointing to winner).
-        // We must do this so the snapshot generator knows to re-render them.
-        for (const parentInfo of loserClass.parents.values()) {
-            const parentClass = this.eclasses.get(parentInfo.parentId);
-            if (parentClass) {
-                parentClass.version++;
-            }
-        }
-
-        // Update hashcons for nodes in loser class (they now belong to winner canonically)
-        for (const nodeId of loserClass.nodes) {
-            const node = this.nodes[nodeId]; // Look up node from registry
-            const key = this.canonicalKey(node);
-            this.hashcons.set(key, winner);
-        }
-
-        // Merge parents (logical merge)
+        // The winner inherits all parents of the loser: they now point into it.
         for (const [key, parentInfo] of loserClass.parents) {
             winnerClass.parents.set(key, parentInfo);
         }
 
-        // In Deferred Mode, we STOP here for the physical merge.
-        // We leave the nodes in 'loser' and 'loser' in 'eclasses'.
-        // We will compact them in 'rebuild()'.
+        this.diffs.push({ type: 'merge', winner, losers: [loser] });
+        this.worklist.add(winner);
+
         if (implementation === 'deferred') {
-            // IMPORTANT: Canonicalize before adding to worklist to avoid duplicates.
-            // If winner was merged with another class in a previous merge, we want to
-            // add the current canonical representative, not a stale ID.
-            this.worklist.add(this.find(winner));
+            // Physical merge happens later during compaction.
             return winner;
         }
 
-        // --- Naive Mode (Eager Merge) ---
+        this.absorbClass(winnerClass, loserClass);
+        return winner;
+    }
 
-        // Merge nodes
+    /** Move all nodes/data of `loser` into `winner` and delete `loser`. */
+    absorbClass(winnerClass: EClassRuntime, loserClass: EClassRuntime) {
         winnerClass.nodes.push(...loserClass.nodes);
-
-        // Merge data (if any) - simple overwrite for now
+        for (const [key, parentInfo] of loserClass.parents) {
+            winnerClass.parents.set(key, parentInfo);
+        }
         if (loserClass.data) {
             winnerClass.data = { ...winnerClass.data, ...loserClass.data };
         }
+        winnerClass.version++;
+        this.eclasses.delete(loserClass.id);
+    }
 
-        this.eclasses.delete(loser);
-        this.diffs.push({ type: 'merge', winner, losers: [loser] });
+    /**
+     * Restore invariants for the parents of one e-class (egg's `repair`):
+     *  1. Re-canonicalize each parent e-node and re-insert it into the hashcons.
+     *  2. Deduplicate parents; parents that became identical are congruent, so
+     *     their e-classes are merged (eagerly) and the duplicate e-node removed.
+     */
+    repairClass(eclassId: ENodeId): RepairResult {
+        const result: RepairResult = { parentNodes: [], updatedNodes: [], merges: [], removedNodes: [] };
+        const eclass = this.eclasses.get(eclassId);
+        if (!eclass) return result;
 
-        // Canonicalize before adding to worklist (should already be canonical in naive mode,
-        // but good practice to be consistent)
-        this.worklist.add(this.find(winner));
+        const parents = Array.from(eclass.parents.values()).filter(
+            p => !this.removedNodes.has(p.parentId)
+        );
+        result.parentNodes = parents.map(p => p.parentId);
 
-        return winner;
+        // 1. Hashcons maintenance + update stored children of each parent e-node
+        for (const p of parents) {
+            const stored = this.nodes[p.parentId];
+            this.hashcons.delete(this.canonicalKey(p.enode));
+            this.hashcons.delete(this.canonicalKey(stored));
+            const canon = this.canonicalize(stored);
+            this.hashcons.set(this.canonicalKey(canon), this.find(p.parentId));
+            if (!sameArgs(stored.args, canon.args)) {
+                this.nodes[p.parentId] = canon;
+                result.updatedNodes.push(p.parentId);
+                const owner = this.eclasses.get(this.find(p.parentId));
+                if (owner) owner.version++;
+            }
+        }
+        this.hashconsVersion++;
+
+        // 2. Deduplicate parents, remembering which ones are congruent
+        //    (parent maps are keyed by e-node ID; `seen` dedups by canonical form)
+        const newParents = new Map<string, ParentInfo>();
+        const seen = new Map<string, ENodeId>();
+        const congruent: Array<[ENodeId, ENodeId]> = [];
+        for (const p of parents) {
+            const canon = this.nodes[p.parentId];
+            const key = this.canonicalKey(canon);
+            const existing = seen.get(key);
+            if (existing !== undefined && existing !== p.parentId) {
+                congruent.push([existing, p.parentId]);
+                continue;
+            }
+            seen.set(key, p.parentId);
+            newParents.set(String(p.parentId), { parentId: p.parentId, enode: canon });
+        }
+        // Assign before merging so merges append the loser's parents correctly.
+        eclass.parents = newParents;
+
+        for (const [keep, dup] of congruent) {
+            const before = this.find(keep) !== this.find(dup);
+            if (before) {
+                this.merge(keep, dup, 'naive');
+                result.merges.push([keep, dup]);
+            }
+            this.removeDuplicateNode(dup, keep);
+            result.removedNodes.push(dup);
+        }
+
+        if (result.merges.length > 0) {
+            this.hashconsVersion++;
+        }
+        return result;
+    }
+
+    /** Remove `dup` from its e-class (it is identical to `keep`, which lives in the same class). */
+    private removeDuplicateNode(dup: ENodeId, keep: ENodeId) {
+        if (this.removedNodes.has(dup)) return;
+        const owner = this.eclasses.get(this.find(dup));
+        if (!owner) return;
+        const idx = owner.nodes.indexOf(dup);
+        if (idx === -1) return;
+        owner.nodes.splice(idx, 1);
+        owner.version++;
+        this.removedNodes.add(dup);
+        // Make sure the hashcons entry for the shared key points at the class.
+        this.hashcons.set(this.canonicalKey(this.nodes[keep]), owner.id);
+        this.diffs.push({ type: 'remove', nodeId: dup, duplicateOf: keep });
     }
 
     find(id: ENodeId): ENodeId {
@@ -207,12 +317,27 @@ export class EGraphRuntime {
         return `${enode.op}(${enode.args.join(',')})`;
     }
 
+    /** IDs of all e-nodes that are still part of some e-class. */
+    liveNodeIds(): ENodeId[] {
+        const ids: ENodeId[] = [];
+        for (const eclass of this.eclasses.values()) ids.push(...eclass.nodes);
+        return ids;
+    }
+
     // Helper for rebuild/repair
     // Returns a list of parent classes that need to be inspected
-    getParents(id: ENodeId): { parentId: ENodeId; enode: ENode }[] {
+    getParents(id: ENodeId): ParentInfo[] {
         const canonicalId = this.find(id);
         const eclass = this.eclasses.get(canonicalId);
         if (!eclass) return [];
         return Array.from(eclass.parents.values());
     }
+}
+
+function sameArgs(a: number[], b: number[]): boolean {
+    if (a.length !== b.length) return false;
+    for (let i = 0; i < a.length; i++) {
+        if (a[i] !== b[i]) return false;
+    }
+    return true;
 }

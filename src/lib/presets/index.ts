@@ -305,16 +305,24 @@ export const PRESETS: PresetConfig[] = [
     {
         id: "non-terminating",
         label: "Non-terminating Growth (Limitation Demo)",
-        description: "f(a)",
+        description: "f(a) with f(x) = f(g(x)): every iteration adds a fresh g(...) layer, so saturation never happens",
         root: { op: "f", args: ["a"] },
         rewrites: [
             {
+                name: "grow-g",
+                lhs: { op: "f", args: ["?x"] },
+                rhs: { op: "f", args: [{ op: "g", args: ["?x"] }] },
+                enabled: true,
+            },
+            {
+                // f(f(x)) = f(x) only ever closes a cycle; kept to contrast with grow-g
                 name: "expand-f",
                 lhs: { op: "f", args: ["?x"] },
                 rhs: { op: "f", args: [{ op: "f", args: ["?x"] }] },
-                enabled: true,
+                enabled: false,
             },
         ],
+        implementationHints: { iterationCap: 8 },
     },
     {
         id: "transitive-chain",

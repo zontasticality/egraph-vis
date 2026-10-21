@@ -1,7 +1,7 @@
 <script lang="ts">
+    import Modal from "./Modal.svelte";
     import { createEventDispatcher } from "svelte";
-    import { isUserPreset } from "../../engine/presetStorage";
-    import { getAllPresets } from "../../presets";
+        import { getAllPresets } from "../../presets";
 
     export let defaultLabel: string;
 
@@ -11,28 +11,27 @@
     }>();
 
     let label = defaultLabel;
-    let showOverwriteWarning = false;
 
-    // Check for overwrite when label changes (since label is now ID)
-    $: {
-        // We check if an ID exists that matches the label exactly
-        // We also need to check if it matches a built-in ID if we were normalizing,
-        // but since we are using label as ID, we just check for exact match.
-        // However, we should check against ALL presets to warn about shadowing/overwriting.
-        const all = getAllPresets();
-        showOverwriteWarning = all.some((p) => p.id === label);
-    }
+    // The (trimmed) name doubles as the preset id; warn before overwriting/shadowing one
+    $: name = label.trim();
+    $: showOverwriteWarning = getAllPresets().some((p) => p.id === name || p.label === name);
 
     function handleSave() {
-        if (!label.trim()) return;
-        // Use label as ID, empty description
-        dispatch("save", { id: label, label, description: "" });
+        if (!name) return;
+        const existing = getAllPresets().find((p) => p.label === name);
+        dispatch("save", { id: existing?.id ?? name, label: name, description: "" });
+    }
+
+    function handleKeydown(e: KeyboardEvent) {
+        if (e.key === "Enter") {
+            e.preventDefault();
+            handleSave();
+        }
     }
 </script>
 
-<div class="modal-backdrop" on:click={() => dispatch("cancel")}>
-    <div class="modal-content" on:click|stopPropagation>
-        <h3>Save Preset</h3>
+<Modal labelledby="save-preset-title" maxWidth="450px" on:close={() => dispatch("cancel")}>
+        <h3 id="save-preset-title">Save Preset</h3>
 
         <div class="form-group">
             <label for="preset-label">Name</label>
@@ -41,7 +40,7 @@
                 type="text"
                 bind:value={label}
                 placeholder="My Awesome Preset"
-                autoFocus
+                on:keydown={handleKeydown}
             />
             {#if showOverwriteWarning}
                 <div class="warning">
@@ -58,38 +57,15 @@
             <button
                 class="btn-save"
                 class:warning={showOverwriteWarning}
-                disabled={!label.trim()}
+                disabled={!name}
                 on:click={handleSave}
             >
                 {showOverwriteWarning ? "Overwrite" : "Save"}
             </button>
         </div>
-    </div>
-</div>
+</Modal>
 
 <style>
-    .modal-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1100; /* Higher than other modals */
-        backdrop-filter: blur(2px);
-    }
-
-    .modal-content {
-        background: white;
-        padding: 24px;
-        border-radius: 12px;
-        width: 100%;
-        max-width: 450px;
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-    }
 
     h3 {
         margin: 0 0 20px 0;

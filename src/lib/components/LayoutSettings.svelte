@@ -60,18 +60,35 @@
 
         // Save immediately for dropdown changes
         saveConfigToStorage(config);
-        dispatch("change", config);
+        dispatch("change", { ...config });
     }
 
+    let dispatchTimeout: number | undefined;
+    // Sliders fire continuously; relayout once the value settles
     function dispatchChange() {
         debouncedSave(config);
-        dispatch("change", config);
+        if (dispatchTimeout) clearTimeout(dispatchTimeout);
+        dispatchTimeout = window.setTimeout(() => dispatch("change", { ...config }), 150);
+    }
+
+    function resetAll() {
+        config = { ...DEFAULT_LAYOUT_CONFIG, force: DEFAULT_LAYOUT_CONFIG.force ? { ...DEFAULT_LAYOUT_CONFIG.force } : undefined };
+        saveConfigToStorage(config);
+        dispatch("change", { ...config });
+    }
+
+    let root: HTMLDivElement;
+    function handleWindowClick(e: MouseEvent) {
+        if (isOpen && root && !root.contains(e.target as Node)) isOpen = false;
+    }
+    function handleWindowKeydown(e: KeyboardEvent) {
+        if (isOpen && e.key === "Escape") isOpen = false;
     }
 
     function handleSelectChange() {
         // Save immediately for dropdown changes (direction, edge routing)
         saveConfigToStorage(config);
-        dispatch("change", config);
+        dispatch("change", { ...config });
     }
 
     function revertProperty(property: keyof LayoutConfig) {
@@ -83,7 +100,7 @@
                     : defaultValue;
             // Save immediately for revert actions (not debounced)
             saveConfigToStorage(config);
-            dispatch("change", config);
+            dispatch("change", { ...config });
         }
     }
 
@@ -105,17 +122,25 @@
     }
 </script>
 
-<div class="layout-settings">
-    <button class="settings-btn" on:click={toggleOpen} class:active={isOpen}>
+<svelte:window on:click={handleWindowClick} on:keydown={handleWindowKeydown} />
+
+<div class="layout-settings" bind:this={root}>
+    <button
+        class="settings-btn"
+        on:click={toggleOpen}
+        class:active={isOpen}
+        aria-expanded={isOpen}
+    >
         Layout Settings
     </button>
 
     {#if isOpen}
-        <div class="popover">
+        <div class="popover" role="dialog" aria-label="Layout settings">
             <div class="section">
-                <label>Algorithm</label>
+                <label for="ls-algorithm">Algorithm</label>
                 <div class="input-row">
                     <select
+                        id="ls-algorithm"
                         value={config.algorithm}
                         on:change={handleAlgorithmChange}
                     >
@@ -136,9 +161,10 @@
             </div>
 
             <div class="section">
-                <label>Direction</label>
+                <label for="ls-direction">Direction</label>
                 <div class="input-row">
                     <select
+                        id="ls-direction"
                         bind:value={config.direction}
                         on:change={handleSelectChange}
                     >
@@ -160,9 +186,10 @@
             </div>
 
             <div class="section">
-                <label>Node Spacing ({config.nodeSpacing}px)</label>
+                <label for="ls-node-spacing">Node Spacing ({config.nodeSpacing}px)</label>
                 <div class="input-row">
                     <input
+                        id="ls-node-spacing"
                         type="range"
                         min="10"
                         max="100"
@@ -183,9 +210,10 @@
             </div>
 
             <div class="section">
-                <label>Edge Routing</label>
+                <label for="ls-edge-routing">Edge Routing</label>
                 <div class="input-row">
                     <select
+                        id="ls-edge-routing"
                         bind:value={config.edgeRouting}
                         on:change={handleSelectChange}
                     >
@@ -207,9 +235,10 @@
 
             {#if config.algorithm === "layered"}
                 <div class="section">
-                    <label>Edge Spacing ({config.edgeEdgeSpacing}px)</label>
+                    <label for="ls-edge-spacing">Edge Spacing ({config.edgeEdgeSpacing}px)</label>
                     <div class="input-row">
                         <input
+                        id="ls-edge-spacing"
                             type="range"
                             min="0"
                             max="50"
@@ -232,9 +261,10 @@
 
             {#if config.algorithm === "layered" || config.algorithm === "mrtree"}
                 <div class="section">
-                    <label>Layer Spacing ({config.layerSpacing}px)</label>
+                    <label for="ls-layer-spacing">Layer Spacing ({config.layerSpacing}px)</label>
                     <div class="input-row">
                         <input
+                        id="ls-layer-spacing"
                             type="range"
                             min="10"
                             max="100"
@@ -257,9 +287,10 @@
 
             {#if config.algorithm === "force" && config.force}
                 <div class="section">
-                    <label>Iterations ({config.force.iterations})</label>
+                    <label for="ls-force-iterations">Iterations ({config.force.iterations})</label>
                     <div class="input-row">
                         <input
+                        id="ls-force-iterations"
                             type="range"
                             min="50"
                             max="500"
@@ -279,9 +310,10 @@
                     </div>
                 </div>
                 <div class="section">
-                    <label>Repulsion ({config.force.repulsion})</label>
+                    <label for="ls-force-repulsion">Repulsion ({config.force.repulsion})</label>
                     <div class="input-row">
                         <input
+                        id="ls-force-repulsion"
                             type="range"
                             min="0.1"
                             max="5.0"
@@ -301,6 +333,7 @@
                     </div>
                 </div>
             {/if}
+            <button class="reset-all" on:click={resetAll}>Reset all to defaults</button>
         </div>
     {/if}
 </div>
@@ -347,6 +380,23 @@
 
     .section {
         margin-bottom: 1rem;
+    }
+
+    .reset-all {
+        width: 100%;
+        margin-top: 0.25rem;
+        padding: 0.35rem;
+        font-size: 0.8rem;
+        color: #6b7280;
+        background: #f9fafb;
+        border: 1px solid #e5e7eb;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .reset-all:hover {
+        color: #111827;
+        background: #f3f4f6;
     }
 
     .section:last-child {

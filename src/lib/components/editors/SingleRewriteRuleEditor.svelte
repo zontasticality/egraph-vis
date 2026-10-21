@@ -1,15 +1,17 @@
 <script lang="ts">
+    import Modal from "./Modal.svelte";
     import { createEventDispatcher } from "svelte";
     import type { RewriteRule } from "../../engine/types";
     import {
         parsePattern,
         stringifyPattern,
-        validatePattern,
-        collectVariables,
+        validateRule,
     } from "../../engine/parser";
 
     export let rule: RewriteRule;
     export let isNew: boolean = false;
+    /** Names of the other rules (a rule name must be unique). */
+    export let takenNames: string[] = [];
 
     const dispatch = createEventDispatcher<{
         save: RewriteRule;
@@ -17,68 +19,40 @@
     }>();
 
     let name = rule.name;
-    let lhs =
-        typeof rule.lhs === "string" ? rule.lhs : stringifyPattern(rule.lhs);
-    let rhs =
-        typeof rule.rhs === "string" ? rule.rhs : stringifyPattern(rule.rhs);
+    let lhs = stringifyPattern(rule.lhs);
+    let rhs = stringifyPattern(rule.rhs);
     let enabled = rule.enabled;
 
-    let lhsError = "";
-    let rhsError = "";
-
-    function validate() {
-        lhsError = "";
-        rhsError = "";
-        let valid = true;
-
-        const lhsValidation = validatePattern(lhs);
-        if (!lhsValidation.valid) {
-            lhsError = lhsValidation.error || "Invalid LHS pattern";
-            valid = false;
-        }
-
-        const rhsValidation = validatePattern(rhs);
-        if (!rhsValidation.valid) {
-            rhsError = rhsValidation.error || "Invalid RHS pattern";
-            valid = false;
-        }
-
-        // Semantic check: RHS variables must be bound in LHS
-        if (lhsValidation.valid && rhsValidation.valid) {
-            const lhsVars = collectVariables(parsePattern(lhs));
-            const rhsVars = collectVariables(parsePattern(rhs));
-            for (const v of rhsVars) {
-                if (!lhsVars.has(v)) {
-                    rhsError = `Variable "${v}" in RHS not bound in LHS`;
-                    valid = false;
-                    break;
-                }
-            }
-        }
-
-        if (!name.trim()) {
-            valid = false; // Name required
-        }
-        return valid;
-    }
+    $: errors = validateRule(lhs, rhs);
+    $: nameError = !name.trim()
+        ? "Name is required"
+        : takenNames.includes(name.trim())
+          ? "Another rule already has this name"
+          : "";
+    $: valid = !errors.lhsError && !errors.rhsError && !nameError;
 
     function handleSave() {
-        if (!validate()) return;
-
-        const updatedRule: RewriteRule = {
-            name,
+        if (!valid) return;
+        dispatch("save", {
+            name: name.trim(),
             lhs: parsePattern(lhs),
             rhs: parsePattern(rhs),
             enabled,
-        };
+        });
+    }
 
-        dispatch("save", updatedRule);
+    function handleKeydown(e: KeyboardEvent) {
+        if (e.key === "Enter" && !e.shiftKey && (e.target as HTMLElement).tagName === "INPUT") {
+            e.preventDefault();
+            handleSave();
+        }
     }
 </script>
 
-<div class="modal-backdrop" on:click={() => dispatch("cancel")}>
-    <div class="modal-content" on:click|stopPropagation>
-        <h3>{isNew ? "Add Rewrite Rule" : "Edit Rewrite Rule"}</h3>
+<Modal labelledby="rule-editor-title" maxWidth="500px" on:close={() => dispatch("cancel")}>
+    <!-- svelte-ignore a11y-no-static-element-interactions -->
+    <div on:keydown={handleKeydown}>
+        <h3 id="rule-editor-title">{isNew ? "Add Rewrite Rule" : "Edit Rewrite Rule"}</h3>
 
         <div class="form-group">
             <label for="rule-name">Name</label>
@@ -86,35 +60,43 @@
                 id="rule-name"
                 type="text"
                 bind:value={name}
+                class:error={!!nameError}
                 placeholder="rule-name"
-                autoFocus
             />
+            {#if nameError}<div class="error-msg">{nameError}</div>{/if}
         </div>
 
         <div class="form-group">
-            <label for="rule-lhs">LHS (Pattern)</label>
+            <label for="rule-lhs">LHS (pattern to match)</label>
             <input
                 id="rule-lhs"
                 type="text"
                 bind:value={lhs}
-                class:error={!!lhsError}
-                placeholder="*(?x, ?y)"
-                on:input={validate}
+                class:error={!!errors.lhsError}
+                placeholder="*(?x, 2)"
+                autocomplete="off"
+                spellcheck="false"
             />
-            {#if lhsError}<div class="error-msg">{lhsError}</div>{/if}
+            {#if errors.lhsError}<div class="error-msg">{errors.lhsError}</div>{/if}
         </div>
 
         <div class="form-group">
-            <label for="rule-rhs">RHS (Pattern)</label>
+            <label for="rule-rhs">RHS (replacement)</label>
             <input
                 id="rule-rhs"
                 type="text"
                 bind:value={rhs}
-                class:error={!!rhsError}
-                placeholder="*(?y, ?x)"
-                on:input={validate}
+                class:error={!!errors.rhsError}
+                placeholder="<<(?x, 1)"
+                autocomplete="off"
+                spellcheck="false"
             />
-            {#if rhsError}<div class="error-msg">{rhsError}</div>{/if}
+            {#if errors.rhsError}<div class="error-msg">{errors.rhsError}</div>{/if}
+        </div>
+
+        <div class="help">
+            <code>?x</code> is a variable (matches any e-class); everything else
+            is an operator or constant, e.g. <code>+(?x, 0)</code>.
         </div>
 
         <div class="form-group checkbox">
@@ -123,37 +105,15 @@
         </div>
 
         <div class="actions">
-            <button class="btn-cancel" on:click={() => dispatch("cancel")}>
-                {isNew ? "Delete" : "Cancel"}
+            <button class="btn-cancel" on:click={() => dispatch("cancel")}>Cancel</button>
+            <button class="btn-save" disabled={!valid} on:click={handleSave}>
+                {isNew ? "Add rule" : "Save"}
             </button>
-            <button class="btn-save" on:click={handleSave}>Save</button>
         </div>
     </div>
-</div>
+</Modal>
 
 <style>
-    .modal-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1200;
-        backdrop-filter: blur(2px);
-    }
-
-    .modal-content {
-        background: white;
-        padding: 24px;
-        border-radius: 12px;
-        width: 100%;
-        max-width: 500px;
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-    }
 
     h3 {
         margin: 0 0 20px 0;
@@ -244,7 +204,25 @@
         color: white;
     }
 
-    .btn-save:hover {
+    .btn-save:hover:not(:disabled) {
         background: #2563eb;
+    }
+
+    .btn-save:disabled {
+        background: #93c5fd;
+        border-color: #93c5fd;
+        cursor: not-allowed;
+    }
+
+    .help {
+        font-size: 0.8rem;
+        color: #6b7280;
+        margin: -4px 0 14px;
+    }
+
+    .help code {
+        background: #f3f4f6;
+        padding: 1px 4px;
+        border-radius: 4px;
     }
 </style>

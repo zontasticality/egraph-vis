@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { currentState } from "../../stores/timelineStore";
+    import { currentState, currentPreset } from "../../stores/timelineStore";
     import {
         isEditing,
         draftPreset,
@@ -8,235 +8,238 @@
     } from "../../stores/presetEditorStore";
     import SingleRewriteRuleEditor from "../editors/SingleRewriteRuleEditor.svelte";
     import type { RewriteRule } from "../../engine/types";
-    import { currentPreset } from "../../stores/timelineStore";
+    import { stringifyPattern } from "../../engine/parser";
 
-    // Access the current rules from the timeline state
-    // In edit mode, we should display the draft rules if available
+    // In edit mode, show the draft rules
     $: displayRules =
         $isEditing && $draftPreset
             ? $draftPreset.rewrites
             : ($currentPreset?.rewrites ?? []);
 
-    // Highlights for rules
-    let highlights: Record<string, { lhs: boolean; rhs: boolean }> = {};
-
-    $: {
-        highlights = {};
+    // Match counts (read phases) and the rule being applied (write phase)
+    $: matchCounts = (() => {
+        const counts = new Map<string, number>();
         const phase = $currentState?.phase;
-        const matches = $currentState?.metadata?.matches || [];
-
-        // Read phase: Highlight LHS of matched rules (yellow)
-        if (phase === "read" && matches.length > 0) {
-            matches.forEach((match: any) => {
-                highlights[match.rule] = { lhs: true, rhs: false };
-            });
+        if (phase === "read" || phase === "read-batch") {
+            for (const m of $currentState!.metadata.matches) {
+                counts.set(m.rule, (counts.get(m.rule) ?? 0) + 1);
+            }
         }
-
-        // Write phase: Highlight RHS of rules that just fired (red)
-        if (phase === "write") {
-            const rewrites =
-                $currentState?.metadata?.diffs?.filter(
-                    (d: any) => d.type === "rewrite",
-                ) || [];
-            rewrites.forEach((rw: any) => {
-                highlights[rw.rule] = { lhs: false, rhs: true };
-            });
-        }
-    }
-
-    import { stringifyPattern } from "../../engine/parser";
-
-    // Helper to render expressions
-    function renderExpr(expr: any): string {
-        if (typeof expr === "string") return expr;
-        return stringifyPattern(expr);
-    }
+        return counts;
+    })();
+    $: appliedRule =
+        $currentState?.phase === "write"
+            ? $currentState.metadata.applied?.rule
+            : undefined;
 
     // --- Editing Logic ---
     let editingRuleIndex: number | null = null;
-    let isAddingRule = false;
+    let newRule: RewriteRule | null = null;
     let collapsed = false;
 
     function ensureEditMode() {
         if (!$isEditing && $currentPreset) {
             enterEditMode($currentPreset);
-            return true;
         }
-        return $isEditing;
+        return $isEditing || !!$currentPreset;
     }
 
     function handleEditRule(index: number) {
         if (ensureEditMode()) {
+            newRule = null;
             editingRuleIndex = index;
-            isAddingRule = false;
         }
     }
 
     function handleAddRule() {
         if (ensureEditMode()) {
-            // Create a dummy rule
-            const newRule: RewriteRule = {
-                name: `rule-${displayRules.length + 1}`,
-                lhs: "?x",
+            editingRuleIndex = null;
+            newRule = {
+                name: uniqueName(`rule-${displayRules.length + 1}`),
+                lhs: { op: "f", args: ["?x"] },
                 rhs: "?x",
                 enabled: true,
             };
+        }
+    }
 
-            // Add it to the draft
-            const newRules = [...displayRules, newRule];
+    function uniqueName(base: string): string {
+        const names = new Set(displayRules.map((r) => r.name));
+        let name = base;
+        for (let i = 2; names.has(name); i++) name = `${base}-${i}`;
+        return name;
+    }
+
+    function handleToggleRule(index: number) {
+        if (ensureEditMode()) {
+            const newRules = displayRules.map((r, i) =>
+                i === index ? { ...r, enabled: !r.enabled } : r,
+            );
             updateDraftRules(newRules);
-
-            // Immediately edit it
-            editingRuleIndex = newRules.length - 1;
-            isAddingRule = true;
         }
     }
 
     function handleDeleteRule(index: number) {
         if (ensureEditMode()) {
-            const newRules = [...displayRules];
-            newRules.splice(index, 1);
-            updateDraftRules(newRules);
-
-            if (editingRuleIndex === index) {
-                editingRuleIndex = null;
-            }
+            updateDraftRules(displayRules.filter((_, i) => i !== index));
+            if (editingRuleIndex === index) editingRuleIndex = null;
         }
     }
 
     function handleSaveRule(e: CustomEvent<RewriteRule>) {
-        if (editingRuleIndex === null) return;
-
         const updatedRule = e.detail;
-        const newRules = [...displayRules];
-        newRules[editingRuleIndex] = updatedRule;
-
-        updateDraftRules(newRules);
-        editingRuleIndex = null;
-        isAddingRule = false;
-    }
-
-    function handleCancelEdit() {
-        if (isAddingRule && editingRuleIndex !== null) {
-            // If we were adding a new rule and cancelled, delete it directly
-            // Don't call handleDeleteRule to avoid triggering ensureEditMode
-            const newRules = [...displayRules];
-            newRules.splice(editingRuleIndex, 1);
-            updateDraftRules(newRules);
+        if (newRule) {
+            updateDraftRules([...displayRules, updatedRule]);
+        } else if (editingRuleIndex !== null) {
+            updateDraftRules(
+                displayRules.map((r, i) => (i === editingRuleIndex ? updatedRule : r)),
+            );
         }
-        editingRuleIndex = null;
-        isAddingRule = false;
+        closeEditor();
     }
+
+    function closeEditor() {
+        editingRuleIndex = null;
+        newRule = null;
+    }
+
+    $: editorRule =
+        newRule ?? (editingRuleIndex !== null ? displayRules[editingRuleIndex] : null);
+    $: takenNames = displayRules
+        .filter((_, i) => newRule !== null || i !== editingRuleIndex)
+        .map((r) => r.name);
 </script>
 
 <div class="rules-panel" class:collapsed>
     <div class="panel-header">
-        <div class="title-group">
-            <h3>Rewrite Rules ({displayRules.length})</h3>
-            <!-- Add Button (Floating, visible on hover) -->
-            <div class="add-container">
-                <button
-                    class="btn-icon add-btn"
-                    on:click={handleAddRule}
-                    title="Add Rule"
-                >
-                    +
-                </button>
-            </div>
-        </div>
         <button
             class="collapse-btn"
             on:click={() => (collapsed = !collapsed)}
+            aria-expanded={!collapsed}
             aria-label="Toggle rules panel"
         >
-            {collapsed ? "+" : "−"}
+            <span class="chevron" class:rot={collapsed}>▾</span>
+            <h3>Rewrite Rules ({displayRules.length})</h3>
+        </button>
+        <button class="add-btn" on:click={handleAddRule} title="Add a rewrite rule">
+            + Add rule
         </button>
     </div>
 
     {#if !collapsed}
         <div class="rules-container">
-            {#each displayRules as rule, i}
+            {#if displayRules.length === 0}
+                <div class="empty">No rules yet. Add one to start rewriting.</div>
+            {/if}
+            {#each displayRules as rule, i (rule.name + i)}
+                {@const count = matchCounts.get(rule.name) ?? 0}
                 <div
                     class="rule-chip"
-                    class:highlight-lhs={highlights[rule.name]?.lhs}
-                    class:highlight-rhs={highlights[rule.name]?.rhs}
+                    class:highlight-lhs={count > 0}
+                    class:highlight-rhs={appliedRule === rule.name}
                     class:disabled={!rule.enabled}
                 >
-                    <div class="rule-name">
-                        {rule.name}
-                        <button
-                            class="btn-icon edit-icon"
-                            on:click={() => handleEditRule(i)}
-                            title="Edit Rule"
-                        >
-                            ✎
-                        </button>
+                    <div class="rule-top">
+                        <label class="enable" title={rule.enabled ? "Disable rule" : "Enable rule"}>
+                            <input
+                                type="checkbox"
+                                checked={rule.enabled}
+                                on:change={() => handleToggleRule(i)}
+                            />
+                        </label>
+                        <span class="rule-name">{rule.name}</span>
+                        {#if count > 0}
+                            <span class="badge match" title="Matches found in this step"
+                                >{count} match{count === 1 ? "" : "es"}</span
+                            >
+                        {/if}
+                        {#if appliedRule === rule.name}
+                            <span class="badge apply">applying</span>
+                        {/if}
+                        <span class="chip-actions">
+                            <button
+                                class="icon-btn"
+                                on:click={() => handleEditRule(i)}
+                                title="Edit rule"
+                                aria-label="Edit rule {rule.name}">✎</button
+                            >
+                            <button
+                                class="icon-btn danger"
+                                on:click={() => handleDeleteRule(i)}
+                                title="Delete rule"
+                                aria-label="Delete rule {rule.name}">✕</button
+                            >
+                        </span>
                     </div>
                     <div class="rule-expr">
-                        <span class="lhs">{renderExpr(rule.lhs)}</span>
+                        <span class="lhs">{stringifyPattern(rule.lhs)}</span>
                         <span class="arrow">→</span>
-                        <span class="rhs">{renderExpr(rule.rhs)}</span>
+                        <span class="rhs">{stringifyPattern(rule.rhs)}</span>
                     </div>
-                    <button
-                        class="btn-icon trash-icon"
-                        on:click={() => handleDeleteRule(i)}
-                        title="Delete Rule"
-                    >
-                        🗑️
-                    </button>
                 </div>
             {/each}
-            <!-- Invisible spacer to force last line justification -->
-            <span class="spacer"></span>
         </div>
     {/if}
 </div>
 
-<!-- Editor Modal -->
-{#if editingRuleIndex !== null}
+{#if editorRule}
     <SingleRewriteRuleEditor
-        rule={displayRules[editingRuleIndex]}
-        isNew={isAddingRule}
+        rule={editorRule}
+        isNew={newRule !== null}
+        {takenNames}
         on:save={handleSaveRule}
-        on:cancel={handleCancelEdit}
+        on:cancel={closeEditor}
     />
 {/if}
 
 <style>
     .rules-panel {
-        position: absolute;
-        bottom: 0;
-        left: 0;
-        right: 0;
-        max-height: 20%; /* 1/5th of parent */
-        background: white;
-        border-top: 2px solid #e5e7eb;
-        box-shadow: 0 -2px 8px rgba(0, 0, 0, 0.1);
+        flex-shrink: 0;
+        max-height: 34%;
         display: flex;
         flex-direction: column;
-        z-index: 100;
-        transition: max-height 0.2s;
-    }
-
-    .rules-panel.collapsed {
-        max-height: 40px;
+        background: white;
+        border-top: 1px solid #e5e7eb;
+        box-shadow: 0 -2px 6px rgba(0, 0, 0, 0.04);
     }
 
     .panel-header {
         display: flex;
         justify-content: space-between;
         align-items: center;
-        padding: 8px 12px;
+        padding: 4px 10px 4px 6px;
         background: #f9fafb;
         border-bottom: 1px solid #e5e7eb;
         flex-shrink: 0;
     }
 
-    .title-group {
+    .rules-panel.collapsed .panel-header {
+        border-bottom: none;
+    }
+
+    .collapse-btn {
         display: flex;
         align-items: center;
-        gap: 8px;
-        position: relative;
+        gap: 6px;
+        background: none;
+        border: none;
+        padding: 4px 6px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .collapse-btn:hover {
+        background: #f3f4f6;
+    }
+
+    .chevron {
+        color: #6b7280;
+        transition: transform 0.15s;
+        display: inline-block;
+    }
+
+    .chevron.rot {
+        transform: rotate(-90deg);
     }
 
     .panel-header h3 {
@@ -246,172 +249,162 @@
         color: #111827;
     }
 
-    .add-container {
-        display: inline-flex;
-        opacity: 0;
-        transition: opacity 0.2s;
-        margin-left: 8px;
-    }
-
-    .rules-panel:hover .add-container {
-        opacity: 1;
-    }
-
-    .btn-icon {
-        background: none;
-        border: none;
-        cursor: pointer;
-        padding: 2px;
-        border-radius: 4px;
-        color: #6b7280;
-        transition: all 0.2s;
-        display: inline-flex;
-        align-items: center;
-        justify-content: center;
-    }
-
-    .btn-icon:hover {
-        background: #f3f4f6;
-        color: #111827;
-    }
-
     .add-btn {
-        font-size: 1.2rem;
-        font-weight: bold;
-        color: #3b82f6;
-        width: 20px;
-        height: 20px;
-        line-height: 1;
+        background: none;
+        border: 1px solid transparent;
+        border-radius: 6px;
+        padding: 3px 8px;
+        font-size: 12px;
+        font-weight: 600;
+        color: #2563eb;
+        cursor: pointer;
     }
 
     .add-btn:hover {
         background: #eff6ff;
-        color: #2563eb;
+        border-color: #bfdbfe;
     }
 
-    .collapse-btn {
-        background: none;
-        border: 1px solid #d1d5db;
-        border-radius: 4px;
-        padding: 2px 8px;
-        cursor: pointer;
-        font-size: 16px;
-    }
-
-    .collapse-btn:hover {
-        background: #f3f4f6;
-    }
-
-    /* Justified chip layout */
     .rules-container {
         overflow-y: auto;
-        flex: 1;
-        padding: 12px;
-        text-align: justify;
-        font-size: 0; /* Remove whitespace between inline-blocks */
+        padding: 8px 10px 10px;
+        display: flex;
+        flex-wrap: wrap;
+        gap: 6px;
+        align-content: flex-start;
     }
 
-    /* Force last line to justify */
-    .rules-container::after {
-        content: "";
-        display: inline-block;
-        width: 100%;
+    .empty {
+        color: #9ca3af;
+        font-size: 12px;
+        font-style: italic;
+        padding: 4px;
     }
 
     .rule-chip {
-        display: inline-block;
         background: #f9fafb;
         border: 1px solid #e5e7eb;
         border-radius: 8px;
-        padding: 6px 10px;
-        margin: 4px 0; /* Vertical margin only */
+        padding: 4px 8px 6px;
         font-size: 12px;
-        vertical-align: top;
-        transition: all 0.2s;
-        min-width: fit-content;
-        position: relative;
+        transition: background 0.15s, border-color 0.15s, box-shadow 0.15s;
     }
 
     .rule-chip:hover {
-        background: #e0e7ff;
-        border-color: #6366f1;
-        box-shadow: 0 2px 4px rgba(99, 102, 241, 0.1);
+        border-color: #c7d2fe;
+        box-shadow: 0 1px 3px rgba(99, 102, 241, 0.12);
+    }
+
+    .rule-top {
+        display: flex;
+        align-items: center;
+        gap: 5px;
+        margin-bottom: 2px;
+    }
+
+    .enable {
+        display: inline-flex;
+        cursor: pointer;
+    }
+
+    .enable input {
+        margin: 0;
+        width: 12px;
+        height: 12px;
+        cursor: pointer;
     }
 
     .rule-name {
         font-weight: 600;
         color: #374151;
-        margin-bottom: 4px;
         font-size: 11px;
-        text-transform: lowercase;
-        display: flex;
-        align-items: center;
-        gap: 4px;
     }
 
-    .edit-icon {
-        font-size: 0.8rem;
+    .badge {
+        font-size: 10px;
+        font-weight: 600;
+        padding: 0 5px;
+        border-radius: 999px;
+        line-height: 15px;
+    }
+
+    .badge.match {
+        background: #fde68a;
+        color: #78350f;
+    }
+
+    .badge.apply {
+        background: #fecdd3;
+        color: #881337;
+    }
+
+    .chip-actions {
+        margin-left: auto;
+        display: inline-flex;
+        gap: 1px;
         opacity: 0;
+        transition: opacity 0.15s;
+    }
+
+    .rule-chip:hover .chip-actions,
+    .rule-chip:focus-within .chip-actions {
+        opacity: 1;
+    }
+
+    .icon-btn {
+        background: none;
+        border: none;
+        cursor: pointer;
+        font-size: 11px;
+        color: #6b7280;
         padding: 1px 4px;
+        border-radius: 4px;
     }
 
-    .rule-name:hover .edit-icon {
-        opacity: 1;
+    .icon-btn:hover {
+        background: #e5e7eb;
+        color: #111827;
     }
 
-    .trash-icon {
-        position: absolute;
-        top: 4px;
-        right: 4px;
-        font-size: 0.8rem;
-        color: #ef4444;
-        opacity: 0;
-    }
-
-    .rule-chip:hover .trash-icon {
-        opacity: 1;
+    .icon-btn.danger:hover {
+        background: #fee2e2;
+        color: #b91c1c;
     }
 
     .rule-expr {
-        color: #6b7280;
-        font-family: "Monaco", "Menlo", monospace;
+        font-family: ui-monospace, Menlo, monospace;
         white-space: nowrap;
+        color: #6b7280;
     }
 
     .lhs {
-        color: #dc2626;
+        color: #b45309;
     }
 
     .arrow {
-        margin: 0 6px;
+        margin: 0 5px;
         color: #9ca3af;
     }
 
     .rhs {
-        color: #059669;
+        color: #047857;
     }
 
-    /* Highlights */
     .highlight-lhs {
-        background: #fef9c3; /* Yellow-50 */
-        border-color: #fde047;
+        background: #fffbeb;
+        border-color: #fcd34d;
     }
 
     .highlight-rhs {
-        background: #fee2e2; /* Red-50 */
-        border-color: #fca5a5;
+        background: #fff1f2;
+        border-color: #fda4af;
     }
 
     .disabled {
-        opacity: 0.6;
-        background: #f3f4f6;
-        text-decoration: line-through;
+        opacity: 0.55;
     }
 
-    /* Invisible spacer for last-line justification */
-    .spacer {
-        display: inline-block;
-        width: 100%;
-        height: 0;
+    .disabled .rule-expr {
+        text-decoration: line-through;
     }
 </style>

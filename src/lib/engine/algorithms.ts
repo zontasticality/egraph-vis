@@ -1,340 +1,80 @@
-import type { EGraphRuntime } from './runtime';
-import type { RewriteRule, Pattern, ENodeId, ENode } from './types';
-import { SeededRandom } from './runtime';
+import type { EGraphRuntime, RepairResult } from './runtime';
+import type { RewriteRule, Pattern, ENodeId } from './types';
+import type { SeededRandom } from './runtime';
 import { isPatternObject, isVariablePattern, isLiteralPattern } from '../utils/typeGuards';
 
 export interface Match {
     rule: RewriteRule;
     eclassId: ENodeId;
     substitution: Map<string, ENodeId>;
+    /** E-nodes matched by the non-variable parts of the LHS, root first. */
+    nodes: ENodeId[];
 }
 
 export interface MatchBatchResult {
     matches: Match[];       // Batch-local matches only
     batchId: number;
+    totalBatches: number;
+    classIds: ENodeId[];    // E-classes searched in this batch
     matchingNodeIds: number[];  // Nodes involved in matches (for highlighting)
 }
 
-// --- Rebuild / Restoration ---
-
-export function rebuild(runtime: EGraphRuntime) {
-    // 1. Compaction Pass (For Deferred Mode Visualization)
-    // In deferred mode, we skipped moving nodes during merge.
-    // We must now move them to the canonical class before repairing invariants.
-
-    // Collect all IDs first to avoid iterator invalidation during deletion
-    const allIds = Array.from(runtime.eclasses.keys());
-
-    for (const id of allIds) {
-        const eclass = runtime.eclasses.get(id);
-        if (!eclass) continue; // Already deleted
-
-        const canonicalId = runtime.find(id);
-        if (id !== canonicalId) {
-            // This is a "stale" class (Red Box).
-            // Move its nodes to the canonical class (Normal Box).
-            const canonicalClass = runtime.eclasses.get(canonicalId);
-            if (canonicalClass) {
-                canonicalClass.nodes.push(...eclass.nodes);
-                // We don't need to update hashcons here because we did it in merge()
-
-                // Merge parents (if any were added after merge? unlikely but safe)
-                for (const [key, parentInfo] of eclass.parents) {
-                    canonicalClass.parents.set(key, parentInfo);
-                }
-
-                // Merge data
-                if (eclass.data) {
-                    canonicalClass.data = { ...canonicalClass.data, ...eclass.data };
-                }
-
-                // Update version to trigger ViewModel refresh
-                canonicalClass.version++;
-            }
-            // Delete the stale class
-            runtime.eclasses.delete(id);
-        }
-    }
-
-    // 2. Standard Congruence Repair
-    // Loop until fixpoint (worklist empty)
-    while (runtime.worklist.size > 0) {
-        const todo = Array.from(runtime.worklist);
-        runtime.worklist.clear();
-
-        for (const eclassId of todo) {
-            repair(runtime, eclassId);
-        }
-    }
+interface PartialMatch {
+    subst: Map<string, ENodeId>;
+    nodes: ENodeId[];
 }
-
-function repair(runtime: EGraphRuntime, eclassId: ENodeId) {
-    // ... (rest of repair is unchanged)
-    // 1. Gather parents that reference this eclass
-    // Note: parents map in runtime stores { parentId, enode }
-    // The 'enode' there is the *old* version. We need to re-canonicalize it.
-    const parents = runtime.getParents(eclassId);
-
-    // 2. Group parents by their NEW canonical key
-    const groups = new Map<string, ENodeId[]>();
-
-    for (const { parentId, enode } of parents) {
-        const canonicalParentId = runtime.find(parentId);
-
-        // Re-canonicalize the parent node itself (its children might have merged)
-        const newEnode = runtime.canonicalize(enode);
-        const newKey = runtime.canonicalKey(newEnode);
-
-        // Update hashcons: The old key might point to something else, 
-        // but we want to ensure the NEW key points to this class.
-        // However, if multiple parents map to the same key, they must be merged.
-        // We defer the hashcons update until after we find the leader of the group.
-
-        if (!groups.has(newKey)) {
-            groups.set(newKey, []);
-        }
-        groups.get(newKey)!.push(canonicalParentId);
-    }
-
-    // 3. Merge classes in each group
-    for (const [key, ids] of groups) {
-        if (ids.length === 0) continue;
-
-        const leader = ids[0];
-
-        // Merge all others into leader
-        for (let i = 1; i < ids.length; i++) {
-            runtime.merge(leader, ids[i]); // Always eager here? Or recursive deferred?
-            // Rebuild is always eager in its internal merges to ensure termination/progress.
-            // If we used deferred merge here, we'd just add to worklist and loop forever?
-            // Actually, `runtime.merge` defaults to 'naive' (eager).
-            // So internal merges in rebuild are eager, which is correct.
-        }
-
-        // Update hashcons to point to the leader
-        // This ensures future addEnode calls find this class
-        runtime.hashcons.set(key, runtime.find(leader));
-    }
-}
-
-// ...
 
 // --- Matching ---
 
-export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Match[] {
-    const matches: Match[] = [];
-    for (const rule of rules) {
-        for (const [id, eclass] of runtime.eclasses) {
-            const found = matchPattern(runtime, rule.lhs, id);
-            for (const substitution of found) {
-                matches.push({ rule, eclassId: id, substitution });
-            }
-        }
-    }
-    return matches;
-}
-
 /**
- * Collect node IDs that match a pattern for visualization highlighting.
- * Shared logic between algorithms and timeline for consistency.
+ * E-matching: find every way `pattern` matches e-class `eclassId`.
+ * Variables bind e-classes; constants and operators must match an e-node.
  */
-export function collectMatchingNodes(
-    runtime: EGraphRuntime,
-    pattern: Pattern | number,
-    eclassId: ENodeId
-): Set<number> {
-    const matchedNodeIds = new Set<number>();
-    const canonicalId = runtime.find(eclassId);
-    const eclass = runtime.eclasses.get(canonicalId);
-    if (!eclass) return matchedNodeIds;
+export function matchPattern(runtime: EGraphRuntime, pattern: Pattern | number, eclassId: ENodeId): PartialMatch[] {
+    const classId = runtime.find(eclassId);
 
-    // Variable pattern: match all nodes in e-class
-    if (typeof pattern === 'string' && pattern.startsWith('?')) {
-        for (const nodeId of eclass.nodes) {
-            matchedNodeIds.add(nodeId);
-        }
-        return matchedNodeIds;
-    }
-
-    // Structural pattern: match specific nodes
-    if (typeof pattern === 'object' && 'op' in pattern) {
-        for (const nodeId of eclass.nodes) {
-            const node = runtime.nodes[nodeId];
-            if (node && node.op === pattern.op) {
-                matchedNodeIds.add(nodeId);
-                // Recursively collect from arguments
-                pattern.args.forEach((argPattern, index) => {
-                    if (index < node.args.length) {
-                        const childMatches = collectMatchingNodes(
-                            runtime,
-                            argPattern,
-                            node.args[index]
-                        );
-                        childMatches.forEach(id => matchedNodeIds.add(id));
-                    }
-                });
-            }
-        }
-    } else if (typeof pattern === 'string') {
-        // Constant pattern
-        for (const nodeId of eclass.nodes) {
-            const node = runtime.nodes[nodeId];
-            if (node && node.op === pattern && node.args.length === 0) {
-                matchedNodeIds.add(nodeId);
-            }
-        }
-    }
-
-    return matchedNodeIds;
-}
-
-/**
- * Generator version that yields periodically to allow snapshots during long searches.
- * In deferred mode with parallelism > 1, simulates parallel search by batching e-classes.
- *
- * IMPORTANT: Read phase is PURE - does not mutate the graph.
- * Returns matches with RHS patterns to be instantiated later in write phase.
- *
- * BATCHING STRATEGY:
- * - Divide e-classes into batches of size 'parallelism'
- * - For each batch, check ALL rules against those e-classes
- * - Yield after each batch (simulating parallel search threads)
- * - This gives ceil(numEClasses / parallelism) batches, NOT ceil(numEClasses / parallelism) * numRules
- */
-export function* collectMatchesGen(
-    runtime: EGraphRuntime,
-    rules: RewriteRule[],
-    parallelism: number = 1
-): Generator<MatchBatchResult> {
-    const eclassArray = Array.from(runtime.eclasses);
-    const enabledRules = rules.filter(r => r.enabled);
-    let batchId = 0;
-
-    // Split e-classes into batches
-    for (let batchStart = 0; batchStart < eclassArray.length; batchStart += parallelism) {
-        const batchEnd = Math.min(batchStart + parallelism, eclassArray.length);
-        const batchEClasses = eclassArray.slice(batchStart, batchEnd);
-
-        const batchMatches: Match[] = [];
-        const batchNodeIds: Set<number> = new Set();
-
-        // Check ALL rules against this batch of e-classes
-        for (const rule of enabledRules) {
-            for (const [id, eclass] of batchEClasses) {
-                const found = matchPattern(runtime, rule.lhs, id);
-
-                for (const substitution of found) {
-                    batchMatches.push({
-                        rule,
-                        eclassId: id,
-                        substitution
-                    });
-
-                    // Collect matching node IDs for visualization
-                    const matchedNodes = collectMatchingNodes(runtime, rule.lhs, id);
-                    matchedNodes.forEach(nodeId => batchNodeIds.add(nodeId));
-                }
-            }
-        }
-
-        // Yield after processing this batch (even if empty, to show progress)
-        yield {
-            matches: batchMatches,
-            batchId: batchId++,
-            matchingNodeIds: Array.from(batchNodeIds)
-        };
-    }
-}
-
-function matchPattern(runtime: EGraphRuntime, pattern: Pattern | number, eclassId: ENodeId): Map<string, ENodeId>[] {
-    // 1. Concrete ID Match
     if (isLiteralPattern(pattern)) {
-        // If pattern is a number, it must match the eclassId?
-        // Or does it match if the eclass contains that node?
-        // Usually in e-graphs, patterns don't contain concrete IDs unless it's a specific reference.
-        // If pattern is a number, it means "match this specific EClass".
-        // So if eclassId === pattern (canonical), it's a match.
-        if (runtime.find(eclassId) === runtime.find(pattern)) {
-            return [new Map()];
-        }
-        return [];
+        return classId === runtime.find(pattern) ? [{ subst: new Map(), nodes: [] }] : [];
     }
 
-    // 2. Variable Match
     if (isVariablePattern(pattern)) {
-        return [new Map([[pattern, eclassId]])];
+        return [{ subst: new Map([[pattern, classId]]), nodes: [] }];
     }
 
-    // 3. Structure Match
-    const eclass = runtime.eclasses.get(eclassId);
+    const eclass = runtime.eclasses.get(classId);
     if (!eclass) return [];
 
-    const results: Map<string, ENodeId>[] = [];
+    const op = typeof pattern === 'string' ? pattern : pattern.op;
+    const argPatterns = typeof pattern === 'string' ? [] : pattern.args;
 
+    const results: PartialMatch[] = [];
     for (const nodeId of eclass.nodes) {
         const node = runtime.nodes[nodeId];
-        const substs = matchNode(runtime, pattern, node);
-        results.push(...substs);
-    }
+        if (node.op !== op || node.args.length !== argPatterns.length) continue;
 
-    return results;
-}
-
-function matchNode(runtime: EGraphRuntime, pattern: Pattern, node: ENode): Map<string, ENodeId>[] {
-    if (isVariablePattern(pattern)) {
-        // This shouldn't happen in matchNode context, but handle gracefully
-        return [];
-    }
-
-    if (typeof pattern === 'string') {
-        // Constant string "foo" -> matches node with op "foo", args []
-        if (node.op === pattern && node.args.length === 0) {
-            return [new Map()];
-        }
-        return [];
-    } else if (isLiteralPattern(pattern)) {
-        return [];
-    }
-
-    // Object pattern { op, args }
-    if (!isPatternObject(pattern)) return [];
-    if (node.op !== pattern.op) return [];
-    if (node.args.length !== pattern.args.length) return [];
-
-    // Recursive match for args
-    let currentSubsts: Map<string, ENodeId>[] = [new Map()];
-
-    for (let i = 0; i < node.args.length; i++) {
-        const argPattern = pattern.args[i];
-        const argClassId = runtime.find(node.args[i]); // Canonicalize before matching
-
-        const nextSubsts: Map<string, ENodeId>[] = [];
-
-        // Find all matches for this argument
-        const argMatches = matchPattern(runtime, argPattern, argClassId);
-
-        // Cartesian product
-        for (const curr of currentSubsts) {
-            for (const argMatch of argMatches) {
-                const merged = mergeSubsts(curr, argMatch);
-                if (merged) {
-                    nextSubsts.push(merged);
+        let partials: PartialMatch[] = [{ subst: new Map(), nodes: [nodeId] }];
+        for (let i = 0; i < argPatterns.length && partials.length > 0; i++) {
+            const argMatches = matchPattern(runtime, argPatterns[i], node.args[i]);
+            const next: PartialMatch[] = [];
+            for (const curr of partials) {
+                for (const argMatch of argMatches) {
+                    const merged = mergeSubsts(curr.subst, argMatch.subst);
+                    if (merged) next.push({ subst: merged, nodes: [...curr.nodes, ...argMatch.nodes] });
                 }
             }
+            partials = next;
         }
-
-        currentSubsts = nextSubsts;
-        if (currentSubsts.length === 0) return [];
+        results.push(...partials);
     }
-
-    return currentSubsts;
+    return results;
 }
 
 function mergeSubsts(a: Map<string, ENodeId>, b: Map<string, ENodeId>): Map<string, ENodeId> | null {
     const merged = new Map(a);
     for (const [varName, id] of b) {
-        if (merged.has(varName)) {
-            if (merged.get(varName) !== id) return null; // Conflict
+        const existing = merged.get(varName);
+        if (existing !== undefined) {
+            if (existing !== id) return null; // Conflict
         } else {
             merged.set(varName, id);
         }
@@ -342,162 +82,81 @@ function mergeSubsts(a: Map<string, ENodeId>, b: Map<string, ENodeId>): Map<stri
     return merged;
 }
 
-// --- Generator Versions for Fine-Grained Snapshots ---
-
-export function* applyMatchesGen(
-    runtime: EGraphRuntime,
-    matches: Match[],
-    impl: 'naive' | 'deferred',
-    rng?: SeededRandom
-): Generator<{ match: Match; phase: 'apply' | 'rebuild' }> {
-    for (const match of matches) {
-        const { rule, eclassId, substitution } = match;
-
-        // Instantiate RHS
-        const newId = instantiatePattern(runtime, rule.rhs, substitution);
-
-        // Merge with target
-        const target = runtime.find(eclassId);
-        const actualNewId = runtime.find(newId);
-
-        // Deduplication check
-        if (target === actualNewId) {
-            continue;
-        }
-
-        // Perform merge
-        runtime.merge(target, actualNewId, impl, rng);
-
-        // Record rewrite diff
-        runtime.diffs.push({
-            type: 'rewrite',
-            rule: rule.name,
-            targetClass: target,
-            createdId: actualNewId,
-            mergedInto: runtime.find(target)
-        });
-
-        // Yield after each merge (no batching - write phase is sequential)
-        yield { match, phase: 'apply' };
-
-        // In naive mode, rebuild will be called separately by TimelineEngine
-        // We don't delegate here to avoid complex type issues
-    }
+function substKey(subst: Map<string, ENodeId>): string {
+    return Array.from(subst.entries())
+        .sort(([a], [b]) => (a < b ? -1 : a > b ? 1 : 0))
+        .map(([k, v]) => `${k}=${v}`)
+        .join(',');
 }
 
-export function* rebuildGen(runtime: EGraphRuntime): Generator<{ phase: 'compact' | 'repair'; eclassId?: number }> {
-    // 1. Compaction Pass
-    const allIds = Array.from(runtime.eclasses.keys());
+/** Match one rule against one e-class, deduplicating identical substitutions. */
+function matchRuleInClass(runtime: EGraphRuntime, rule: RewriteRule, eclassId: ENodeId): Match[] {
+    const matches: Match[] = [];
+    const seen = new Set<string>();
+    for (const m of matchPattern(runtime, rule.lhs, eclassId)) {
+        const key = substKey(m.subst);
+        if (seen.has(key)) continue;
+        seen.add(key);
+        matches.push({ rule, eclassId, substitution: m.subst, nodes: m.nodes });
+    }
+    return matches;
+}
 
-    for (const id of allIds) {
-        const eclass = runtime.eclasses.get(id);
-        if (!eclass) continue;
+/** Collect all matches of all enabled rules (rule-major order). */
+export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Match[] {
+    const enabled = rules.filter(r => r.enabled);
+    const ids = Array.from(runtime.eclasses.keys());
+    const matches: Match[] = [];
+    for (const rule of enabled) {
+        for (const id of ids) {
+            matches.push(...matchRuleInClass(runtime, rule, id));
+        }
+    }
+    return matches;
+}
 
-        const canonicalId = runtime.find(id);
-        if (id !== canonicalId) {
-            const canonicalClass = runtime.eclasses.get(canonicalId);
-            if (canonicalClass) {
-                canonicalClass.nodes.push(...eclass.nodes);
-                for (const [key, parentInfo] of eclass.parents) {
-                    canonicalClass.parents.set(key, parentInfo);
+/**
+ * Generator version that yields after each batch of e-classes.
+ * In deferred mode with parallelism > 1, simulates parallel search by batching e-classes:
+ * every batch checks ALL rules against `parallelism` e-classes.
+ *
+ * IMPORTANT: The read phase is PURE - it does not mutate the graph.
+ */
+export function* collectMatchesGen(
+    runtime: EGraphRuntime,
+    rules: RewriteRule[],
+    parallelism: number = 1
+): Generator<MatchBatchResult> {
+    const ids = Array.from(runtime.eclasses.keys());
+    const enabledRules = rules.filter(r => r.enabled);
+    const size = Math.max(1, Math.floor(parallelism));
+    const totalBatches = Math.ceil(ids.length / size);
+
+    for (let batchId = 0; batchId < totalBatches; batchId++) {
+        const classIds = ids.slice(batchId * size, (batchId + 1) * size);
+        const batchMatches: Match[] = [];
+        const batchNodeIds = new Set<number>();
+
+        for (const rule of enabledRules) {
+            for (const id of classIds) {
+                for (const match of matchRuleInClass(runtime, rule, id)) {
+                    batchMatches.push(match);
+                    match.nodes.forEach(n => batchNodeIds.add(n));
                 }
-                if (eclass.data) {
-                    canonicalClass.data = { ...canonicalClass.data, ...eclass.data };
-                }
-                canonicalClass.version++;
             }
-            runtime.eclasses.delete(id);
-
-            // Yield after each compaction (no batching - rebuild is sequential)
-            yield { phase: 'compact', eclassId: canonicalId };
-        }
-    }
-
-    // 2. Congruence Repair (Sequential - deduplication happens naturally via worklist)
-    while (runtime.worklist.size > 0) {
-        // Take just one item from the worklist
-        const eclassId = runtime.worklist.values().next().value;
-        if (eclassId === undefined) break; // Safety check
-
-        runtime.worklist.delete(eclassId);
-
-        // IMPORTANT: Check if this e-class still exists after compaction.
-        // If it was compacted into another class, skip it (redundant work).
-        const canonicalId = runtime.find(eclassId);
-        if (!runtime.eclasses.has(canonicalId)) {
-            // E-class was deleted during compaction, skip
-            continue;
-        }
-        if (eclassId !== canonicalId) {
-            // E-class is non-canonical (was compacted), skip redundant repair
-            continue;
         }
 
-        // Repair this item (may add more items to worklist)
-        repair(runtime, eclassId);
-
-        // Yield after each repair to show worklist changes
-        yield { phase: 'repair', eclassId };
+        yield {
+            matches: batchMatches,
+            batchId,
+            totalBatches,
+            classIds,
+            matchingNodeIds: Array.from(batchNodeIds)
+        };
     }
 }
 
-export function applyMatches(
-    runtime: EGraphRuntime,
-    matches: Match[],
-    impl: 'naive' | 'deferred'
-) {
-    for (const match of matches) {
-        const { rule, eclassId, substitution } = match;
-
-        // Instantiate RHS
-        const newId = instantiatePattern(runtime, rule.rhs, substitution);
-
-        // Merge with target
-        const target = runtime.find(eclassId);
-        const actualNewId = runtime.find(newId);
-
-        // Deduplication check:
-        // If the new node is ALREADY in the target class, merge returns the same ID and does nothing.
-        // We can check this before calling merge to avoid recording a diff.
-        if (target === actualNewId) {
-            // Redundant rewrite
-            continue;
-        }
-
-        // Perform merge
-        // Pass implementation flag to support lazy merge in deferred mode
-        runtime.merge(target, actualNewId, impl);
-
-        // In naive mode, we restore invariants immediately after every merge
-        if (impl === 'naive') {
-            rebuild(runtime);
-        }
-
-        // Record diff
-        // Note: runtime.merge records a 'merge' diff.
-        // We also want to record a 'rewrite' diff to link it to the rule.
-        // But `runtime.diffs` is a flat list.
-        // We should append a specific rewrite event.
-        // The spec says: "Record metadata diff referencing rule.name".
-        // "type: 'rewrite', rule: string, targetClass: number, createdId: number, mergedInto: number"
-
-        // We need to be careful: `runtime.merge` already pushed a 'merge' event.
-        // The UI might want to know WHICH rewrite caused this.
-        // Maybe we should add the rewrite event *after* the merge?
-        // Or maybe the 'rewrite' event IS the merge event wrapper?
-        // Spec says: "Record metadata diff referencing rule.name... In addition to the merge diff?"
-        // "metadata.diffs entries referencing rewrites should include: { type: 'rewrite', ... }"
-        // This seems to be a separate event.
-
-        runtime.diffs.push({
-            type: 'rewrite',
-            rule: rule.name,
-            targetClass: target,
-            createdId: actualNewId, // The ID of the node we created (or found)
-            mergedInto: runtime.find(target) // The winner of the merge
-        });
-    }
-}
+// --- Writing ---
 
 export function instantiatePattern(
     runtime: EGraphRuntime,
@@ -507,23 +166,148 @@ export function instantiatePattern(
     if (isVariablePattern(pattern)) {
         const id = subst.get(pattern);
         if (id === undefined) throw new Error(`Variable ${pattern} not found in substitution`);
-        return id;
+        return runtime.find(id);
     } else if (typeof pattern === 'string') {
-        // Constant string pattern
         return runtime.addEnode({ op: pattern, args: [] });
     } else if (isLiteralPattern(pattern)) {
-        return pattern;
+        return runtime.find(pattern);
     }
 
-    // Pattern object { op, args }
     if (!isPatternObject(pattern)) {
         throw new Error(`Invalid pattern type: ${typeof pattern}`);
     }
 
-    const args: ENodeId[] = [];
-    for (const arg of pattern.args) {
-        args.push(instantiatePattern(runtime, arg, subst));
+    const args = pattern.args.map(arg => instantiatePattern(runtime, arg, subst));
+    return runtime.addEnode({ op: pattern.op, args });
+}
+
+export interface ApplyResult {
+    /** Canonical ID of the matched e-class (before the union). */
+    target: ENodeId;
+    /** ID returned by instantiating the RHS. */
+    createdId: ENodeId;
+    /** E-nodes newly created while instantiating the RHS. */
+    newNodes: ENodeId[];
+    /** Whether the union changed the e-graph (false = rewrite was redundant). */
+    changed: boolean;
+}
+
+/**
+ * Apply one rewrite: instantiate the RHS under `substitution` and union it
+ * with `targetClass`. IDs are re-canonicalized first since earlier writes may
+ * have merged them.
+ */
+export function applyRewrite(
+    runtime: EGraphRuntime,
+    ruleName: string,
+    rhs: Pattern,
+    targetClass: ENodeId,
+    substitution: Map<string, ENodeId>,
+    impl: 'naive' | 'deferred',
+    rng?: SeededRandom
+): ApplyResult {
+    const canonicalSubst = new Map<string, ENodeId>();
+    for (const [varName, id] of substitution) {
+        canonicalSubst.set(varName, runtime.find(id));
     }
 
-    return runtime.addEnode({ op: pattern.op, args });
+    const firstNew = runtime.nextId;
+    const createdId = instantiatePattern(runtime, rhs, canonicalSubst);
+    const newNodes: ENodeId[] = [];
+    for (let id = firstNew; id < runtime.nextId; id++) newNodes.push(id);
+
+    const target = runtime.find(targetClass);
+    const actualNewId = runtime.find(createdId);
+    if (target === actualNewId) {
+        return { target, createdId, newNodes, changed: newNodes.length > 0 };
+    }
+
+    runtime.merge(target, actualNewId, impl, rng);
+    runtime.diffs.push({
+        type: 'rewrite',
+        rule: ruleName,
+        targetClass: target,
+        createdId: actualNewId,
+        mergedInto: runtime.find(target)
+    });
+    return { target, createdId: actualNewId, newNodes, changed: true };
+}
+
+export function* applyMatchesGen(
+    runtime: EGraphRuntime,
+    matches: Match[],
+    impl: 'naive' | 'deferred',
+    rng?: SeededRandom
+): Generator<{ match: Match; result: ApplyResult }> {
+    for (const match of matches) {
+        const result = applyRewrite(runtime, match.rule.name, match.rule.rhs, match.eclassId, match.substitution, impl, rng);
+        if (result.changed) {
+            yield { match, result };
+        }
+    }
+}
+
+/** Apply all matches; in naive mode invariants are restored after every union. */
+export function applyMatches(
+    runtime: EGraphRuntime,
+    matches: Match[],
+    impl: 'naive' | 'deferred'
+) {
+    for (const _ of applyMatchesGen(runtime, matches, impl)) {
+        if (impl === 'naive') rebuild(runtime);
+    }
+}
+
+// --- Rebuild / Restoration ---
+
+export type RebuildStep =
+    | { phase: 'compact'; eclassId: ENodeId; compactedId: ENodeId }
+    | { phase: 'repair'; eclassId: ENodeId; result: RepairResult };
+
+/**
+ * Restore the e-graph invariants, yielding after each unit of work:
+ *  1. Compaction (deferred mode only has work here): fold every merged,
+ *     non-canonical e-class into its canonical representative.
+ *  2. Repair: pop the worklist one e-class at a time and run congruence
+ *     closure on its parents until the worklist is empty.
+ */
+export function* rebuildGen(runtime: EGraphRuntime): Generator<RebuildStep> {
+    // 1. Compaction pass (ascending ID order for deterministic playback)
+    const allIds = Array.from(runtime.eclasses.keys()).sort((a, b) => a - b);
+    for (const id of allIds) {
+        const eclass = runtime.eclasses.get(id);
+        if (!eclass) continue;
+
+        const canonicalId = runtime.find(id);
+        if (id === canonicalId) continue;
+
+        const canonicalClass = runtime.eclasses.get(canonicalId);
+        if (canonicalClass) {
+            runtime.absorbClass(canonicalClass, eclass);
+        } else {
+            runtime.eclasses.delete(id);
+        }
+        yield { phase: 'compact', eclassId: canonicalId, compactedId: id };
+    }
+
+    // 2. Congruence repair, one worklist entry at a time
+    while (runtime.worklist.size > 0) {
+        const eclassId = runtime.worklist.values().next().value as ENodeId;
+        runtime.worklist.delete(eclassId);
+
+        // Entries can become stale when their class is merged into another one
+        // later; the winner is always on the worklist too, so skip them.
+        const canonicalId = runtime.find(eclassId);
+        if (eclassId !== canonicalId || !runtime.eclasses.has(canonicalId)) continue;
+
+        const result = runtime.repairClass(eclassId);
+        yield { phase: 'repair', eclassId, result };
+    }
+}
+
+/** Run a full rebuild without yielding intermediate steps. */
+export function rebuild(runtime: EGraphRuntime) {
+    for (const _ of rebuildGen(runtime)) {
+        // drain
+    }
 }

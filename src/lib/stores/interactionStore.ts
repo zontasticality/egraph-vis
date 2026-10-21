@@ -3,7 +3,8 @@ import { writable } from 'svelte/store';
 export type HoverTarget =
     | { type: 'eclass'; id: number }
     | { type: 'enode'; id: number }
-    | { type: 'hashcons'; key: string };
+    | { type: 'hashcons'; key: string }
+    | { type: 'match'; nodes: number[]; eclass: number };
 
 export interface Selection {
     nodeIds: Set<number>;

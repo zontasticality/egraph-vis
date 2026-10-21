@@ -1,30 +1,27 @@
 import { writable, derived, get } from 'svelte/store';
 import type { PresetConfig, RewriteRule, Pattern } from '../engine/types';
-import { saveUserPreset, isUserPreset } from '../engine/presetStorage';
+import { saveUserPreset } from '../engine/presetStorage';
 
 // Core state
 export const isEditing = writable(false);
 export const draftPreset = writable<PresetConfig | null>(null);
 export const originalPresetId = writable<string | null>(null);
-const originalPresetJson = writable<string | null>(null);
+/** The preset as it was when editing started (what "Revert" restores). */
+export const originalPreset = writable<PresetConfig | null>(null);
+
+const clone = <T>(value: T): T => JSON.parse(JSON.stringify(value));
 
 // Derived state
-export const isDirty = derived(
-    [draftPreset, originalPresetJson],
-    ([$draft, $origJson]) => {
-        if (!$draft || !$origJson) return false;
-        return JSON.stringify($draft) !== $origJson;
-    }
-);
+export const isDirty = derived([draftPreset, originalPreset], ([$draft, $orig]) => {
+    if (!$draft || !$orig) return false;
+    return JSON.stringify($draft) !== JSON.stringify($orig);
+});
 
 // Actions
 export function enterEditMode(preset: PresetConfig) {
-    // Deep copy to create draft
-    const json = JSON.stringify(preset);
-    const draft = JSON.parse(json);
-    draftPreset.set(draft);
+    originalPreset.set(clone(preset));
+    draftPreset.set(clone(preset));
     originalPresetId.set(preset.id);
-    originalPresetJson.set(json);
     isEditing.set(true);
 }
 
@@ -32,45 +29,33 @@ export function exitEditMode() {
     isEditing.set(false);
     draftPreset.set(null);
     originalPresetId.set(null);
-    originalPresetJson.set(null);
+    originalPreset.set(null);
 }
 
 export function updateDraftRoot(root: Pattern) {
-    draftPreset.update(p => {
-        if (!p) return null;
-        return { ...p, root };
-    });
+    draftPreset.update(p => (p ? { ...p, root } : null));
 }
 
 export function updateDraftRules(rules: RewriteRule[]) {
-    draftPreset.update(p => {
-        if (!p) return null;
-        return { ...p, rewrites: rules };
-    });
+    draftPreset.update(p => (p ? { ...p, rewrites: rules } : null));
 }
 
 export function saveAsPreset(id: string, label: string, description: string) {
     const draft = get(draftPreset);
     if (!draft) return;
 
-    const newPreset: PresetConfig = {
-        ...draft,
-        id: id,
-        label: label,
-        description: description
-    };
-
+    const newPreset: PresetConfig = { ...clone(draft), id, label, description };
     saveUserPreset(newPreset);
 
-    // Update draft to match saved state
-    draftPreset.set(newPreset);
+    // The saved preset becomes the new baseline
+    draftPreset.set(clone(newPreset));
+    originalPreset.set(clone(newPreset));
     originalPresetId.set(id);
-    originalPresetJson.set(JSON.stringify(newPreset));
-
-    // We stay in edit mode but now editing the new preset
     return newPreset;
 }
 
-export function revertChanges(originalPreset: PresetConfig) {
-    enterEditMode(originalPreset);
+/** Discard all edits made since editing started. */
+export function revertChanges() {
+    const orig = get(originalPreset);
+    if (orig) draftPreset.set(clone(orig));
 }

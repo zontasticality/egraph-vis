@@ -1,25 +1,26 @@
 import type { Pattern } from './types';
 import { isVariablePattern, isPatternObject } from '../utils/typeGuards';
 
+/**
+ * Parse an s-expression-like pattern: `op(arg, ...)`, constants (`a`, `0`)
+ * and variables (`?x`).
+ */
 export function parsePattern(input: string): Pattern {
     const tokens = tokenize(input);
     if (tokens.length === 0) throw new Error('Empty input');
 
     const { pattern, remaining } = parseTokenList(tokens);
     if (remaining.length > 0) {
-        throw new Error('Unexpected tokens after pattern');
+        throw new Error(`Unexpected '${remaining[0]}' after pattern`);
     }
     return pattern;
 }
 
-export function stringifyPattern(pattern: Pattern): string {
+export function stringifyPattern(pattern: Pattern | number): string {
+    if (typeof pattern === 'number') return String(pattern);
     if (typeof pattern === 'string') return pattern;
 
-    const args = pattern.args.map(arg => {
-        if (typeof arg === 'number') return String(arg); // Should not happen in presets usually
-        return stringifyPattern(arg);
-    }).join(', ');
-
+    const args = pattern.args.map(arg => stringifyPattern(arg)).join(', ');
     return `${pattern.op}(${args})`;
 }
 
@@ -50,14 +51,46 @@ export function collectVariables(pattern: Pattern | number): Set<string> {
     return vars;
 }
 
+/**
+ * Validate a rewrite rule given as source text. Returns per-side errors.
+ */
+export function validateRule(lhs: string, rhs: string): { lhsError?: string; rhsError?: string } {
+    const out: { lhsError?: string; rhsError?: string } = {};
+    let lhsPattern: Pattern | undefined;
+    let rhsPattern: Pattern | undefined;
+    try {
+        lhsPattern = parsePattern(lhs);
+    } catch (e: any) {
+        out.lhsError = e.message;
+    }
+    try {
+        rhsPattern = parsePattern(rhs);
+    } catch (e: any) {
+        out.rhsError = e.message;
+    }
+    if (lhsPattern !== undefined && isVariablePattern(lhsPattern)) {
+        out.lhsError = 'LHS cannot be a bare variable (it would match every e-class)';
+    }
+    if (lhsPattern !== undefined && rhsPattern !== undefined && !out.rhsError) {
+        const bound = collectVariables(lhsPattern);
+        for (const v of collectVariables(rhsPattern)) {
+            if (!bound.has(v)) {
+                out.rhsError = `Variable "${v}" in RHS not bound in LHS`;
+                break;
+            }
+        }
+    }
+    return out;
+}
+
 // --- Internal Parser Logic ---
+
+const DELIMITERS = new Set(['(', ')', ',']);
 
 function tokenize(input: string): string[] {
     // Split by parens, commas, and whitespace, keeping delimiters
-    // Remove whitespace tokens
-    const regex = /([(),]|\s+)/;
     return input
-        .split(regex)
+        .split(/([(),]|\s+)/)
         .map(t => t.trim())
         .filter(t => t.length > 0);
 }
@@ -68,8 +101,18 @@ function parseTokenList(tokens: string[]): { pattern: Pattern; remaining: string
     const token = tokens[0];
     const rest = tokens.slice(1);
 
+    if (DELIMITERS.has(token)) {
+        throw new Error(token === ')' || token === ',' ? `Expected an argument but found '${token}'` : `Unexpected '('`);
+    }
+    if (token === '?') {
+        throw new Error("Variable name missing after '?'");
+    }
+
     // Case 1: Function application "op("
     if (rest.length > 0 && rest[0] === '(') {
+        if (isVariablePattern(token)) {
+            throw new Error(`Variable ${token} cannot be used as an operator`);
+        }
         const op = token;
         let current = rest.slice(1); // Skip '('
         const args: Pattern[] = [];

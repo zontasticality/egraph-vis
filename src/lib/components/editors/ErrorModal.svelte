@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Modal from "./Modal.svelte";
     import { createEventDispatcher } from "svelte";
 
     export let title: string = "Error";
@@ -9,11 +10,11 @@
     }>();
 </script>
 
-<div class="modal-backdrop" on:click={() => dispatch("close")}>
-    <div class="modal-content" on:click|stopPropagation>
+<Modal labelledby="error-modal-title" maxWidth="420px" on:close={() => dispatch("close")}>
+    <div class="error-modal">
         <div class="icon-header">
             <div class="icon-bg">⚠️</div>
-            <h3>{title}</h3>
+            <h3 id="error-modal-title">{title}</h3>
         </div>
 
         <div class="error-list">
@@ -27,24 +28,11 @@
             >
         </div>
     </div>
-</div>
+</Modal>
 
 <style>
-    .modal-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1200;
-        backdrop-filter: blur(2px);
-    }
 
-    .modal-content {
+    .error-modal {
         background: white;
         padding: 24px;
         border-radius: 12px;

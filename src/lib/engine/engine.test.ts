@@ -1,6 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import { TimelineEngine } from './timeline';
 import type { PresetConfig } from './types';
+import { NodeStyleClass } from './types';
 
 describe('TimelineEngine', () => {
     it('should initialize and run a simple preset', async () => {
@@ -642,9 +643,13 @@ describe('TimelineEngine', () => {
             }
 
             // Verify that visual states are populated correctly
+            // (node visual states are sparse: only highlighted nodes are present)
             expect(readBatchStates.length).toBeGreaterThan(0);
-            expect(lastReadBatchState?.visualStates?.nodes.size).toBeGreaterThan(0);
-            expect(writeState?.visualStates?.nodes.size).toBeGreaterThan(0);
+            expect(readBatchStates.some(s => Array.from(s.visualStates.nodes.values())
+                .some(v => v.styleClass === NodeStyleClass.MatchedLHS))).toBe(true);
+            // These rewrites (a -> c) create no new e-nodes; the rewritten LHS is highlighted
+            expect(Array.from(writeState!.visualStates.nodes.values())
+                .some(v => v.styleClass === NodeStyleClass.MatchedLHS)).toBe(true);
 
             // Investigate the write phases at the end
             console.log('\nInvestigating final write phases:');
@@ -766,48 +771,21 @@ describe('TimelineEngine', () => {
             engine.loadPreset(paperExample, { iterationCap: 10, implementation: 'deferred' });
             const timeline = await engine.runUntilHalt();
 
-            // Check snapshots after the first rebuild (compact/repair phases)
-            const compactStates = timeline.states.filter(s => s.phase === 'compact');
-            const repairStates = timeline.states.filter(s => s.phase === 'repair');
+            // While a rebuild is pending, e-nodes may still point at merged
+            // (non-canonical) e-classes -- that is exactly what rebuilding fixes.
+            const pending = timeline.states.filter(s => s.phase === 'write' || s.phase === 'compact');
+            expect(pending.some(s => s.eclasses.some(c => c.nodes.some(n =>
+                n.args.some(a => s.unionFind[a].canonical !== a))))).toBe(true);
 
-            expect(compactStates.length).toBeGreaterThan(0);
-            expect(repairStates.length).toBeGreaterThan(0);
-
-            // After rebuild, all node arguments in the ViewModel should point to canonical IDs
-            let foundNonCanonical = false;
-            for (const state of [...compactStates, ...repairStates]) {
+            // Once a rebuild finishes (next read / done), every stored argument is canonical.
+            const rebuilt = timeline.states.filter(s => s.phase === 'read-batch' || s.phase === 'done');
+            expect(rebuilt.length).toBeGreaterThan(0);
+            for (const state of rebuilt) {
                 for (const eclass of state.eclasses) {
                     for (const node of eclass.nodes) {
                         for (const argId of node.args) {
-                            const argCanonical = state.unionFind[argId]?.canonical ?? argId;
-
-                            // CRITICAL ASSERTION: Node arguments should always be canonical
-                            // after rebuild phases (compact/repair)
-                            if (argId !== argCanonical) {
-                                if (!foundNonCanonical) {
-                                    console.log('\n=== BUG DETECTED: Non-canonical node arguments ===');
-                                    foundNonCanonical = true;
-                                }
-                                console.log(`  Node ${node.id} (${node.op}(${node.args.join(',')})) in e-class ${eclass.id}`);
-                                console.log(`    Arg ${argId} should be canonical ${argCanonical}`);
-                                console.log(`    Phase: ${state.phase}, Step: ${state.stepIndex}`);
-                            }
-                            expect(argId).toBe(argCanonical);
+                            expect(state.unionFind[argId].canonical).toBe(argId);
                         }
-                    }
-                }
-            }
-
-            // Also check the final state
-            const finalState = timeline.states[timeline.states.length - 1];
-            for (const eclass of finalState.eclasses) {
-                for (const node of eclass.nodes) {
-                    for (const argId of node.args) {
-                        const argCanonical = finalState.unionFind[argId]?.canonical ?? argId;
-                        if (argId !== argCanonical) {
-                            console.log(`FINAL STATE: Node ${node.id} (op: ${node.op}) has non-canonical arg ${argId} -> ${argCanonical}`);
-                        }
-                        expect(argId).toBe(argCanonical);
                     }
                 }
             }
@@ -925,11 +903,11 @@ describe('TimelineEngine', () => {
             const fArg1Canon = state.unionFind[listNode.args[1]]?.canonical ?? listNode.args[1];
             expect(fArg0Canon).toBe(fArg1Canon);
 
-            // Verify hashcons points to canonical ID for the merged f-node key
-            // The f-class should contain both f-nodes
-            const fClass = state.eclasses.find(c => c.nodes.some(n => n.op === 'f'))!;
-            const fNodes = fClass.nodes.filter(n => n.op === 'f');
-            expect(fNodes.length).toBe(2); // Both f(a) and f(b) should be in the same class
+            // f(a) and f(b) became identical e-nodes, so (like egg) the class keeps a single copy
+            const fClasses = state.eclasses.filter(c => c.nodes.some(n => n.op === 'f'));
+            expect(fClasses.length).toBe(1);
+            expect(fClasses[0].nodes.filter(n => n.op === 'f').length).toBe(1);
+            expect(state.hashcons.filter(h => h.op === 'f').map(h => h.eclass)).toEqual([fClasses[0].id]);
         });
 
         it('should handle cycles gracefully (a = f(a))', async () => {

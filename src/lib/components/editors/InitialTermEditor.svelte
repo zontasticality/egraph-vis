@@ -1,4 +1,5 @@
 <script lang="ts">
+    import Modal from "./Modal.svelte";
     import { createEventDispatcher } from "svelte";
     import {
         parsePattern,
@@ -38,15 +39,12 @@
         if (e.key === "Enter" && !e.shiftKey) {
             e.preventDefault();
             handleSave();
-        } else if (e.key === "Escape") {
-            dispatch("cancel");
         }
     }
 </script>
 
-<div class="modal-backdrop" on:click={() => dispatch("cancel")}>
-    <div class="modal-content" on:click|stopPropagation>
-        <h3>Edit Initial Term</h3>
+<Modal labelledby="term-editor-title" maxWidth="500px" on:close={() => dispatch("cancel")}>
+        <h3 id="term-editor-title">Edit Initial Term</h3>
 
         <div class="input-group">
             <label for="term-input">Term Expression</label>
@@ -56,8 +54,8 @@
                 bind:value={inputValue}
                 class:invalid={!validation.valid}
                 on:keydown={handleKeydown}
-                autoFocus
                 autocomplete="off"
+                spellcheck="false"
             />
             {#if error}
                 <div class="error-message">{error}</div>
@@ -80,34 +78,9 @@
                 Save
             </button>
         </div>
-    </div>
-</div>
+</Modal>
 
 <style>
-    .modal-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 1000;
-        backdrop-filter: blur(2px);
-    }
-
-    .modal-content {
-        background: white;
-        padding: 24px;
-        border-radius: 12px;
-        width: 100%;
-        max-width: 500px;
-        box-shadow:
-            0 20px 25px -5px rgba(0, 0, 0, 0.1),
-            0 10px 10px -5px rgba(0, 0, 0, 0.04);
-    }
 
     h3 {
         margin: 0 0 20px 0;

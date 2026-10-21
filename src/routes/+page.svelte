@@ -6,10 +6,12 @@
         currentPreset,
     } from "$lib/stores/timelineStore";
     import { onMount } from "svelte";
+    import { get } from "svelte/store";
+    import * as timelineApi from "$lib/stores/timelineStore";
     import { PaneGroup, Pane, PaneResizer } from "paneforge";
     import GraphPane from "$lib/components/graph_pane/GraphPane.svelte";
     import StatePane from "$lib/components/state_pane/StatePane.svelte";
-    import { getAllPresets, getPresetById } from "$lib/presets";
+    import { getAllPresets, getPresetById, isBuiltInPreset } from "$lib/presets";
     import LayoutSettings from "$lib/components/LayoutSettings.svelte";
     import { layoutManager } from "$lib/engine/layout";
     import type { LayoutConfig } from "$lib/engine/layoutConfig";
@@ -25,6 +27,7 @@
         saveAsPreset,
         revertChanges,
     } from "$lib/stores/presetEditorStore";
+    import type { EngineOptions, PresetConfig } from "$lib/engine/types";
     import {
         exportPresets,
         importPresets,
@@ -36,6 +39,7 @@
     import InitialTermEditor from "$lib/components/editors/InitialTermEditor.svelte";
     import SaveAsDialog from "$lib/components/editors/SaveAsDialog.svelte";
     import ErrorModal from "$lib/components/editors/ErrorModal.svelte";
+    import Modal from "$lib/components/editors/Modal.svelte";
 
     let isDeferred = true;
     let parallelism = 2; // Default parallelism for deferred mode
@@ -55,6 +59,8 @@
 
     // Reactive list of presets
     $: allPresets = getAllPresets();
+    const checkUserPreset = (_presets: PresetConfig[], id: string) => isUserPreset(id);
+    $: selectedIsUser = checkUserPreset(allPresets, selectedPresetId);
 
     // Derived state for UI
     $: currentTermString =
@@ -64,16 +70,33 @@
               ? stringifyPattern($currentPreset.root)
               : "";
 
-    function reload() {
-        const preset = getPresetById(selectedPresetId) || allPresets[0];
-        // If we were editing, we should exit edit mode unless we are reloading the SAME preset we are editing
-        // But usually reload implies a fresh start.
-        // If we just saved, we want to reload with the new data.
-
-        loadPreset(preset, {
+    function engineOptions(): EngineOptions {
+        return {
             implementation: isDeferred ? "deferred" : "naive",
             parallelism: isDeferred ? parallelism : 1,
-        });
+        };
+    }
+
+    /** Re-run the engine for the preset being shown (the draft while editing). */
+    function reload() {
+        const draft = get(isEditing) ? get(draftPreset) : null;
+        const preset: PresetConfig =
+            draft ?? getPresetById(selectedPresetId) ?? allPresets[0];
+        if (!draft && preset.id !== selectedPresetId) selectedPresetId = preset.id;
+        loadPreset(preset, engineOptions());
+    }
+
+    // Live update while editing (debounced). Iteration/node limits in the
+    // engine keep runaway rule sets from freezing the page.
+    let liveTimer: ReturnType<typeof setTimeout> | undefined;
+    function scheduleLiveReload(draft: PresetConfig) {
+        clearTimeout(liveTimer);
+        liveTimer = setTimeout(() => {
+            if (!get(isEditing)) return;
+            const shown = get(currentPreset);
+            if (shown && JSON.stringify(shown) === JSON.stringify(draft)) return;
+            loadPreset(draft, engineOptions());
+        }, 120);
     }
 
     function handlePresetChange(e: Event) {
@@ -136,6 +159,12 @@
 
     function toggleParallelismDropdown(event: MouseEvent) {
         event.stopPropagation();
+        if (!isDeferred) {
+            // Clicking the "Deferred" label in naive mode switches modes
+            isDeferred = true;
+            reload();
+            return;
+        }
         showImplDropdown = !showImplDropdown;
     }
 
@@ -147,9 +176,18 @@
         }
     }
 
-    async function handleLayoutConfigChange(e: CustomEvent<LayoutConfig>) {
-        if (!$timelineStore) return;
-        await layoutManager.updateConfig(e.detail, $timelineStore);
+    function handleLayoutConfigChange(e: CustomEvent<LayoutConfig>) {
+        layoutManager.updateConfig({ ...e.detail });
+    }
+
+    function handleDeletePreset() {
+        if (!isUserPreset(selectedPresetId)) return;
+        const shadowsBuiltIn = isBuiltInPreset(selectedPresetId);
+        deleteUserPreset(selectedPresetId);
+        allPresets = getAllPresets();
+        if (!shadowsBuiltIn) selectedPresetId = allPresets[0].id;
+        exitEditMode();
+        reload();
     }
 
     // --- Preset Actions ---
@@ -168,9 +206,7 @@
     }
 
     function handleRevert() {
-        if ($currentPreset) {
-            revertChanges($currentPreset);
-        }
+        revertChanges();
     }
 
     function handleSaveAs() {
@@ -182,19 +218,12 @@
         const newPreset = saveAsPreset(id, label, description);
 
         if (newPreset) {
-            // Force refresh of presets list
+            // Refresh the preset list and switch to the saved preset
             allPresets = getAllPresets();
             selectedPresetId = newPreset.id;
             showSaveAsDialog = false;
-
-            // Reload to reflect changes in the engine
-            reload();
-
-            // Re-enter edit mode for the new preset so user can continue editing if they want
-            // Or maybe we should exit edit mode?
-            // The plan said "No auto-reload when saving current preset", but we just switched IDs potentially.
-            // Let's exit edit mode to be safe and clean.
             exitEditMode();
+            reload();
         }
     }
 
@@ -267,23 +296,28 @@
         ready = true;
         reload();
 
+        if (import.meta.env.DEV) {
+            // Debug handle for poking at the running app from the console
+            (window as any).__egraph = { ...timelineApi, layoutManager };
+        }
+
+        const unsubscribeDraft = draftPreset.subscribe((draft) => {
+            if (draft && get(isEditing)) scheduleLiveReload(draft);
+        });
+
         // Add global click listener for closing dropdown
-        document.addEventListener('click', handleOutsideClick);
+        document.addEventListener("click", handleOutsideClick);
         return () => {
-            document.removeEventListener('click', handleOutsideClick);
+            unsubscribeDraft();
+            clearTimeout(liveTimer);
+            document.removeEventListener("click", handleOutsideClick);
         };
     });
-
-    // Live update when editing - WITH SAFEGUARDS
-    // Iteration cap prevents infinite loops from recursive rules
-    $: if ($isEditing && $draftPreset) {
-        loadPreset($draftPreset, {
-            implementation: isDeferred ? "deferred" : "naive",
-            parallelism: isDeferred ? parallelism : 1,
-            iterationCap: 100, // Safety limit to prevent freezing
-        });
-    }
 </script>
+
+<svelte:head>
+    <title>E-Graph Visualizer</title>
+</svelte:head>
 
 <!-- Modals -->
 {#if showTermEditor && ($draftPreset || $currentPreset)}
@@ -311,41 +345,36 @@
 {/if}
 
 {#if showUnsavedChangesDialog}
-    <div class="modal-backdrop" on:click={cancelDiscardChanges}>
-        <div class="modal-content" on:click|stopPropagation>
-            <h3>Unsaved Changes</h3>
-            <p>You have unsaved changes. Do you want to discard them?</p>
-            <div class="actions">
-                <button class="btn-cancel" on:click={cancelDiscardChanges}
-                    >Cancel</button
-                >
-                <button class="btn-danger" on:click={confirmDiscardChanges}
-                    >Discard Changes</button
-                >
-            </div>
+    <Modal labelledby="unsaved-title" maxWidth="400px" on:close={cancelDiscardChanges}>
+        <h3 id="unsaved-title" class="dialog-title">Unsaved Changes</h3>
+        <p>You have unsaved changes. Do you want to discard them?</p>
+        <div class="actions">
+            <button class="btn-cancel" on:click={cancelDiscardChanges}>Cancel</button>
+            <button class="btn-danger" on:click={confirmDiscardChanges}>Discard Changes</button>
         </div>
-    </div>
+    </Modal>
 {/if}
 
 <div class="app-container">
     <header class="global-header">
         <div class="header-section title-section">
             <h1>
-                E-Graph Visualizer
+                <span class="title-text">E-Graph Visualizer</span>
                 {#if currentTermString}
                     <span
                         class="term-display"
                         role="button"
                         tabindex="0"
-                        title="Edit initial term"
+                        title="{currentTermString} (click to edit)"
                         on:click={handleEditTerm}
                         on:keydown={handleTermDisplayKeydown}
-                        >: <code>{currentTermString}</code></span
+                        ><code>{currentTermString}</code></span
                     >
                     <button
                         class="icon-btn"
                         on:click={handleEditTerm}
-                        title="Edit initial term">✎</button
+                        title="Edit initial term"
+                        aria-label="Edit initial term">✎</button
                     >
                 {/if}
             </h1>
@@ -372,6 +401,7 @@
                         <button
                             class="action-btn"
                             title="Revert changes"
+                            aria-label="Revert changes"
                             disabled={!$isDirty}
                             on:click={handleRevert}
                         >
@@ -380,6 +410,7 @@
                         <button
                             class="action-btn"
                             title="Save As..."
+                            aria-label="Save as new preset"
                             on:click={handleSaveAs}
                         >
                             💾
@@ -388,16 +419,32 @@
                     <button
                         class="action-btn"
                         title="Download Preset"
+                        aria-label="Download preset"
                         on:click={handleDownload}
                     >
                         ⬇
                     </button>
+                    {#if selectedIsUser && !$isEditing}
+                        <button
+                            class="action-btn"
+                            title={isBuiltInPreset(selectedPresetId)
+                                ? "Delete your copy (restores the built-in preset)"
+                                : "Delete this preset"}
+                            aria-label="Delete preset"
+                            on:click={handleDeletePreset}
+                        >
+                            🗑
+                        </button>
+                    {/if}
                 </div>
             </div>
 
             <div class="toggle-container">
-                <span class="toggle-label {isDeferred ? '' : 'active'}"
-                    >Naive</span
+                <button
+                    class="toggle-label naive-button {isDeferred ? '' : 'active'}"
+                    on:click={() => isDeferred && toggleImplementation()}
+                    title="Naive: restore invariants after every union"
+                    >Naive</button
                 >
                 <button
                     class="toggle-switch {isDeferred ? 'checked' : ''}"
@@ -411,6 +458,7 @@
                         class="toggle-label {isDeferred ? 'active' : ''} deferred-button"
                         on:click={toggleParallelismDropdown}
                         aria-label="Select Deferred Parallelism"
+                        title="Deferred (egg): read all matches, apply them, then rebuild once"
                     >
                         Deferred x{parallelism}
                         <svg
@@ -506,31 +554,8 @@
 </div>
 
 <style>
-    /* Modal Styles (Inline for Unsaved Changes) */
-    .modal-backdrop {
-        position: fixed;
-        top: 0;
-        left: 0;
-        width: 100%;
-        height: 100%;
-        background: rgba(0, 0, 0, 0.5);
-        display: flex;
-        align-items: center;
-        justify-content: center;
-        z-index: 2000;
-        backdrop-filter: blur(2px);
-    }
-
-    .modal-content {
-        background: white;
-        padding: 24px;
-        border-radius: 12px;
-        width: 100%;
-        max-width: 400px;
-        box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-    }
-
-    .modal-content h3 {
+    /* Unsaved-changes dialog */
+    .dialog-title {
         margin: 0 0 12px 0;
         font-size: 1.1rem;
         font-weight: 600;
@@ -556,6 +581,19 @@
         background: #dc2626;
     }
 
+    .btn-cancel {
+        background: white;
+        border: 1px solid #d1d5db;
+        color: #374151;
+        padding: 8px 16px;
+        border-radius: 6px;
+        cursor: pointer;
+    }
+
+    .btn-cancel:hover {
+        background: #f9fafb;
+    }
+
     /* App Styles */
     .app-container {
         display: flex;
@@ -566,10 +604,9 @@
     }
 
     .global-header {
-        display: grid;
-        grid-template-columns: 1fr 1.6fr 1fr;
+        display: flex;
         align-items: center;
-        column-gap: 1rem;
+        gap: 1rem;
         padding: 0 1rem;
         height: 58px;
         background: white;
@@ -584,17 +621,34 @@
     }
 
     .title-section {
+        flex: 1 1 auto;
         min-width: 0; /* Allow shrinking */
+        overflow: hidden;
     }
 
     .center-controls {
+        flex: 0 0 auto;
         justify-content: center;
         gap: 1.25rem;
     }
 
     .right-controls {
+        flex: 0 0 auto;
         justify-content: flex-end;
         gap: 0.75rem;
+        white-space: nowrap;
+    }
+
+    @media (max-width: 1180px) {
+        h1 .title-text {
+            display: none;
+        }
+    }
+
+    @media (max-width: 860px) {
+        .io-controls {
+            display: none;
+        }
     }
 
     h1 {
@@ -606,6 +660,7 @@
         display: flex;
         align-items: center;
         gap: 8px;
+        min-width: 0;
     }
 
     .term-display {
@@ -616,18 +671,27 @@
         align-items: center;
         gap: 4px;
         cursor: pointer;
+        min-width: 0;
     }
 
     .term-display code {
+        display: block;
+        flex: 1 1 auto;
         background: #f3f4f6;
         padding: 2px 6px;
         border-radius: 4px;
         font-family: "Monaco", "Menlo", monospace;
         font-size: 0.9rem;
         color: #4b5563;
-        max-width: 300px;
+        max-width: 320px;
+        min-width: 0;
         overflow: hidden;
         text-overflow: ellipsis;
+        white-space: nowrap;
+    }
+
+    .icon-btn {
+        flex-shrink: 0;
     }
 
     .icon-btn {
@@ -668,6 +732,7 @@
         background-repeat: no-repeat;
         background-size: 1.5em 1.5em;
         min-width: 200px;
+        max-width: 290px;
     }
 
     .preset-selector:hover {
@@ -747,6 +812,19 @@
 
     .toggle-label.active {
         color: #111827;
+    }
+
+    .naive-button {
+        background: none;
+        border: none;
+        padding: 0.25rem 0.4rem;
+        border-radius: 4px;
+        font: inherit;
+        cursor: pointer;
+    }
+
+    .naive-button:hover {
+        background: #f3f4f6;
     }
 
     .toggle-switch {

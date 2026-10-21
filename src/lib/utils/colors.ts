@@ -1,87 +1,77 @@
-// Simple hash function to map IDs to a color palette
-export function getColorForId(id: number | string): string {
-    const colors = [
-        '#ef4444', // red-500
-        '#f97316', // orange-500
-        '#eab308', // yellow-500
-        '#22c55e', // green-500
-        '#06b6d4', // cyan-500
-        '#3b82f6', // blue-500
-        '#8b5cf6', // violet-500
-        '#d946ef', // fuchsia-500
-        '#f43f5e', // rose-500
-    ];
+/**
+ * Identity colors for e-class / e-node IDs and color interpolation helpers.
+ *
+ * IDs are spread around the hue circle by the golden angle so that nearby IDs
+ * (which are usually shown next to each other) get clearly distinct colors.
+ */
 
-    const strId = String(id);
-    let hash = 0;
-    for (let i = 0; i < strId.length; i++) {
-        hash = strId.charCodeAt(i) + ((hash << 5) - hash);
-    }
+const GOLDEN_ANGLE = 137.508;
 
-    const index = Math.abs(hash) % colors.length;
-    return colors[index];
+function idHue(id: number | string): number {
+    let n = typeof id === 'number' ? id : hashString(id);
+    if (!Number.isFinite(n)) n = 0;
+    return (((n * GOLDEN_ANGLE + 200) % 360) + 360) % 360;
 }
 
-export function getLightColorForId(id: number | string): string {
-    // Lighter versions for backgrounds
-    const colors = [
-        '#fee2e2', // red-100
-        '#ffedd5', // orange-100
-        '#fef9c3', // yellow-100
-        '#dcfce7', // green-100
-        '#cffafe', // cyan-100
-        '#dbeafe', // blue-100
-        '#ede9fe', // violet-100
-        '#fae8ff', // fuchsia-100
-        '#ffe4e6', // rose-100
-    ];
-
-    const strId = String(id);
+function hashString(s: string): number {
     let hash = 0;
-    for (let i = 0; i < strId.length; i++) {
-        hash = strId.charCodeAt(i) + ((hash << 5) - hash);
-    }
+    for (let i = 0; i < s.length; i++) hash = (hash * 31 + s.charCodeAt(i)) | 0;
+    return Math.abs(hash);
+}
 
-    const index = Math.abs(hash) % colors.length;
-    return colors[index];
+/** Saturated, readable-on-white color for an ID (text, borders). */
+export function getColorForId(id: number | string): string {
+    return hslToHex(idHue(id), 0.62, 0.42);
+}
+
+/** Light tint for an ID (backgrounds). */
+export function getLightColorForId(id: number | string): string {
+    return hslToHex(idHue(id), 0.75, 0.94);
+}
+
+export function hslToHex(h: number, s: number, l: number): string {
+    const k = (n: number) => (n + h / 30) % 12;
+    const a = s * Math.min(l, 1 - l);
+    const f = (n: number) => l - a * Math.max(-1, Math.min(k(n) - 3, Math.min(9 - k(n), 1)));
+    return rgbToHex([f(0) * 255, f(8) * 255, f(4) * 255]);
+}
+
+export function hexToRgb(hex: string): [number, number, number] {
+    let h = hex.trim().replace('#', '');
+    if (h.length === 3) h = h.split('').map(c => c + c).join('');
+    const n = parseInt(h, 16);
+    if (h.length !== 6 || Number.isNaN(n)) throw new Error(`Invalid hex color: ${hex}`);
+    return [(n >> 16) & 255, (n >> 8) & 255, n & 255];
+}
+
+export function rgbToHex([r, g, b]: [number, number, number]): string {
+    const c = (v: number) => Math.round(Math.max(0, Math.min(255, v))).toString(16).padStart(2, '0');
+    return `#${c(r)}${c(g)}${c(b)}`;
+}
+
+/** Linear interpolation between two hex colors (returns hex). */
+export function mixColor(a: string, b: string, t: number): string {
+    if (t <= 0 || a === b) return a;
+    if (t >= 1) return b;
+    const [r1, g1, b1] = hexToRgb(a);
+    const [r2, g2, b2] = hexToRgb(b);
+    return rgbToHex([r1 + (r2 - r1) * t, g1 + (g2 - g1) * t, b1 + (b2 - b1) * t]);
 }
 
 /**
- * Interpolate between two colors using CSS color-mix (GPU-accelerated).
- * 
- * @param color1 Starting color (CSS color string)
- * @param color2 Ending color (CSS color string)
- * @param progress Interpolation progress from 0 to 1
- * @returns CSS color-mix expression
+ * Interpolate between two colors using CSS color-mix (works for any CSS color).
  */
-export function interpolateColor(
-    color1: string,
-    color2: string,
-    progress: number,
-): string {
+export function interpolateColor(color1: string, color2: string, progress: number): string {
     if (progress <= 0.01) return color1;
     if (progress >= 0.99) return color2;
-
-    // Convert progress to percentage
     const p1 = Math.round((1 - progress) * 100);
     const p2 = Math.round(progress * 100);
-
-    // Use CSS color-mix for GPU-accelerated blending
     return `color-mix(in srgb, ${color1} ${p1}%, ${color2} ${p2}%)`;
 }
 
 /**
  * Linearly interpolate between two opacity values.
- * 
- * @param opacity1 Starting opacity (0-1)
- * @param opacity2 Ending opacity (0-1)
- * @param progress Interpolation progress from 0 to 1
- * @returns Interpolated opacity value
  */
-export function interpolateOpacity(
-    opacity1: number,
-    opacity2: number,
-    progress: number,
-): number {
+export function interpolateOpacity(opacity1: number, opacity2: number, progress: number): number {
     return opacity1 + (opacity2 - opacity1) * progress;
 }
