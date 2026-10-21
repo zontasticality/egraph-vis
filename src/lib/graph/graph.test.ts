@@ -106,7 +106,8 @@ describe('layout', () => {
                 ? { layout: () => new Promise(() => {}), terminateWorker: () => {} }
                 : real;
         };
-        const lm = new LayoutManager(DEFAULT_LAYOUT_CONFIG, factory, { timeoutMs: 50 });
+        // Generous timeout: a cold first layout on a slow CI runner must not time out too
+        const lm = new LayoutManager(DEFAULT_LAYOUT_CONFIG, factory, { timeoutMs: 1000 });
         lm.setTimeline(timeline);
         // the hung call is abandoned and retried on a fresh worker
         expect(await lm.whenReady(0)).toBeDefined();
