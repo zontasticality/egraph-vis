@@ -8,7 +8,7 @@ export type Phase =
     | 'init'
     | 'read'        // naive: all matches collected at once
     | 'read-batch'  // deferred: one batch of e-classes searched
-    | 'write'       // one rewrite applied (instantiate RHS + union)
+    | 'write'       // rewrites applied (instantiate RHS + union); deferred: one per worker, in parallel
     | 'compact'     // deferred: a merged e-class is physically folded into its canonical class
     | 'repair'      // one worklist entry processed (congruence closure)
     | 'done';
@@ -30,6 +30,7 @@ export enum EClassStyleClass {
     Active = 1,          // Currently being processed (repair/compact phase)
     InWorklist = 2,      // In the worklist
     Merged = 3,          // Non-canonical (merged away, waiting for compaction)
+    Searching = 4,       // Read-batch: a worker is searching this e-class
 }
 
 // --- Visual State Structures ---
@@ -143,6 +144,8 @@ export interface WriteList {
     entries: WriteListEntry[];
     count: number;
     nextIndex: number;      // Consumption pointer for write phase
+    /** write: first entry of this step's batch; entries [batchStart, nextIndex) were applied in parallel. */
+    batchStart?: number;
 }
 
 export interface StepMetadata {
@@ -158,17 +161,35 @@ export interface StepMetadata {
     timestamp?: number;
     activeId?: number; // ID of the e-class being processed (compact/repair)
 
-    /** read-batch: the e-classes searched in this batch */
-    batch?: { index: number; total: number; classIds: number[] };
+    /**
+     * read-batch: the e-classes searched in this batch. Each of the `size`
+     * parallel workers takes one e-class: worker i searches
+     * `classIds[i]`. `order` lists every e-class of this read phase in search
+     * order (shared by all batches of the iteration), so batch k covers
+     * `order.slice(k * size, (k + 1) * size)`.
+     */
+    batch?: { index: number; total: number; classIds: number[]; size: number; order: number[] };
     /** compact: the merged e-class being folded into `activeId` */
     compactedId?: number;
     /** repair: parent e-nodes that were re-canonicalized */
     repairedNodes?: number[];
-    /** write: the rewrite being applied */
-    applied?: { rule: string; targetClass: number; createdId: number; newNodes: number[]; lhsNodes: number[] };
+    /** write: the rewrites applied in this step that changed the e-graph (one per busy worker) */
+    applied?: AppliedRewrite[];
 
     // Deferred mode fields
     writelist?: WriteList;
+}
+
+export interface AppliedRewrite {
+    rule: string;
+    targetClass: number;
+    createdId: number;
+    newNodes: number[];
+    lhsNodes: number[];
+    /** Worker that applied it (deferred mode applies one writelist entry per worker). */
+    worker: number;
+    /** Writelist index (deferred mode). */
+    entry?: number;
 }
 
 export interface MatchEvent {
@@ -200,7 +221,7 @@ export interface EngineOptions {
     maxNodes?: number;         // Stop applying rewrites once this many e-nodes exist
     maxSteps?: number;         // Stop once this many snapshots were emitted
     seed?: number; // Seed for random union-find decisions
-    parallelism?: number; // Number of parallel operations (for deferred mode): 2, 4, 8, 16, 32
+    parallelism?: number; // Deferred mode: workers that search e-classes and apply rewrites in parallel
 }
 
 export interface EGraphEngine {
@@ -233,6 +254,8 @@ export interface PresetConfig {
     implementationHints?: {
         defaultImpl?: Implementation;
         iterationCap?: number;
+        /** Parallel workers to select when the preset is chosen (deferred mode). */
+        parallelism?: number;
     };
     visualization?: {
         autoPlay?: boolean;

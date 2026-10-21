@@ -41,6 +41,33 @@ export const PRESETS: PresetConfig[] = [
         ],
     },
     {
+        id: "parallel-matching",
+        label: "Parallel Matching (Deferred Demo)",
+        description: "(a * 2 + b * 2) + (c * 2 + d * 2): independent sub-terms, so parallel workers find matches (and apply them) at the same time",
+        root: {
+            op: "+",
+            args: [
+                { op: "+", args: [{ op: "*", args: ["a", "2"] }, { op: "*", args: ["b", "2"] }] },
+                { op: "+", args: [{ op: "*", args: ["c", "2"] }, { op: "*", args: ["d", "2"] }] },
+            ],
+        },
+        rewrites: [
+            {
+                name: "mul-to-shift",
+                lhs: { op: "*", args: ["?x", "2"] },
+                rhs: { op: "<<", args: ["?x", "1"] },
+                enabled: true,
+            },
+            {
+                name: "add-comm",
+                lhs: { op: "+", args: ["?x", "?y"] },
+                rhs: { op: "+", args: ["?y", "?x"] },
+                enabled: true,
+            },
+        ],
+        implementationHints: { parallelism: 4 },
+    },
+    {
         id: "simple-add",
         label: "Simple Addition",
         description: "a + 0",

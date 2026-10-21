@@ -68,7 +68,7 @@ describe('timeline structure', () => {
                         // matched e-nodes are visible in the snapshot that reports them
                         for (const m of s.metadata.matches) m.nodes.forEach(id => expect(live.has(id)).toBe(true));
                     }
-                    s.metadata.applied?.newNodes.forEach(id => expect(live.has(id)).toBe(true));
+                    s.metadata.applied?.forEach(a => a.newNodes.forEach(id => expect(live.has(id)).toBe(true)));
                     for (const h of s.hashcons) expect(s.unionFind[h.eclass].isCanonical).toBe(true);
                     for (const id of s.nodeChunks.flat().keys()) expect(getSnapshotNode(s, id)).toBeDefined();
                 }
@@ -130,10 +130,15 @@ describe('metadata', () => {
         const batches = timeline.states.filter(s => s.phase === 'read-batch' && s.metadata.iteration === 0);
         const total = batches[0].metadata.batch!.total;
         expect(batches.length).toBe(total);
+        const order = batches[0].metadata.batch!.order;
         batches.forEach((s, i) => {
-            expect(s.metadata.batch!.index).toBe(i);
-            expect(s.metadata.batch!.classIds.length).toBeLessThanOrEqual(4);
+            const b = s.metadata.batch!;
+            expect(b.index).toBe(i);
+            expect(b.size).toBe(4);
+            expect(b.order).toBe(order); // one shared array per read phase
+            expect(b.classIds).toEqual(order.slice(i * 4, (i + 1) * 4));
         });
+        expect([...order].sort((a, b) => a - b)).toEqual(batches[0].eclasses.map(c => c.id));
         const searched = batches.flatMap(s => s.metadata.batch!.classIds);
         expect(new Set(searched).size).toBe(batches[0].eclasses.length);
     });
@@ -143,9 +148,10 @@ describe('metadata', () => {
         for (const impl of ['naive', 'deferred'] as const) {
             const { timeline } = run(p, { implementation: impl });
             const write = timeline.states.find(s => s.phase === 'write')!;
-            expect(write.metadata.applied).toEqual({
-                rule: 'shift', targetClass: 2, createdId: 4, newNodes: [3, 4], lhsNodes: [2, 1]
-            });
+            expect(write.metadata.applied).toEqual([{
+                rule: 'shift', targetClass: 2, createdId: 4, newNodes: [3, 4], lhsNodes: [2, 1], worker: 0,
+                ...(impl === 'deferred' ? { entry: 0 } : {})
+            }]);
             expect(write.metadata.diffs.map(d => d.type)).toEqual(['add', 'add', 'merge', 'rewrite']);
         }
     });

@@ -13,8 +13,8 @@ export const PHASE_LABELS: Record<Phase, string> = {
 export const PHASE_DESCRIPTIONS: Record<Phase, string> = {
     init: 'The initial term is added to the e-graph, one e-class per e-node.',
     read: 'E-matching: every rule is searched for in every e-class. The e-graph is not modified.',
-    'read-batch': 'E-matching one batch of e-classes (simulating parallel search). Matches go into the writelist; the e-graph is not modified.',
-    write: 'A rewrite is applied: its right-hand side is added and unioned with the matched e-class.',
+    'read-batch': 'E-matching one batch of e-classes, one worker per e-class, in parallel. Matches go into the writelist; the e-graph is not modified.',
+    write: 'Rewrites are applied: each right-hand side is added and unioned with its matched e-class. In deferred mode every worker applies one writelist entry at the same time.',
     compact: 'An e-class that was unioned away is folded into its canonical representative.',
     repair: 'Rebuilding: the parents of an e-class from the worklist are re-canonicalized; parents that became identical are merged (congruence).',
     done: 'Equality saturation has stopped.'
@@ -54,11 +54,19 @@ export function describeStep(state: EGraphState): string {
             return `Searched every e-class — ${found === 0 ? 'no matches' : plural(found, 'match', 'matches')}`;
         }
         case 'write': {
-            const a = m.applied;
-            if (!a) return 'Applying a rewrite';
-            const created = a.newNodes.length > 0 ? `, +${plural(a.newNodes.length, 'new e-node')}` : '';
-            const entry = m.writelist ? ` (entry ${m.writelist.nextIndex} of ${m.writelist.count})` : '';
-            return `Applying ${a.rule}: union e-class ${a.targetClass} with ${a.createdId}${created}${entry}`;
+            const applied = m.applied ?? [];
+            const wl = m.writelist;
+            if (applied.length === 0) return 'Applying rewrites';
+            const created = applied.reduce((n, a) => n + a.newNodes.length, 0);
+            const plus = created > 0 ? `, +${plural(created, 'new e-node')}` : '';
+            if (applied.length === 1) {
+                const a = applied[0];
+                const entry = wl ? ` (entry ${a.entry !== undefined ? a.entry + 1 : wl.nextIndex} of ${wl.count})` : '';
+                return `Applying ${a.rule}: union e-class ${a.targetClass} with ${a.createdId}${plus}${entry}`;
+            }
+            const range = wl && wl.batchStart !== undefined ? ` (entries ${wl.batchStart + 1}–${wl.nextIndex} of ${wl.count})` : '';
+            const list = applied.map(a => `${a.rule} (${a.targetClass} ∪ ${a.createdId})`).join(', ');
+            return `${applied.length} workers apply in parallel: ${list}${plus}${range}`;
         }
         case 'compact':
             return `Compacting e-class ${m.compactedId} into canonical e-class ${m.activeId}`;

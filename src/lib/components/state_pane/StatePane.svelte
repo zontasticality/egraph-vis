@@ -1,7 +1,7 @@
 <script lang="ts">
 	import {
-		currentState,
-		currentIndex,
+		displayState,
+		displayIndex,
 		timeline,
 	} from "../../stores/timelineStore";
 	import { interactionStore } from "../../stores/interactionStore";
@@ -33,10 +33,10 @@
 		return { update: run };
 	}
 
-	$: state = $currentState;
+	$: state = $displayState;
 	$: prev =
-		$timeline && $currentIndex > 0
-			? $timeline.states[$currentIndex - 1]
+		$timeline && $displayIndex > 0
+			? $timeline.states[$displayIndex - 1]
 			: null;
 	$: deferred = state?.implementation === "deferred";
 	$: phase = state?.phase;
@@ -88,8 +88,11 @@
 	// ── Writelist (deferred) / matches (naive) ──────────────────────────
 	$: writelist = meta?.writelist;
 	$: wlEntries = writelist ? writelist.entries.slice(0, writelist.count) : [];
-	$: currentEntry =
-		phase === "write" && writelist ? writelist.nextIndex - 1 : -1;
+	// Entries applied by the workers in this write step
+	$: currentStart =
+		phase === "write" && writelist ? writelist.batchStart ?? writelist.nextIndex - 1 : -1;
+	$: isCurrentEntry = (i: number) =>
+		phase === "write" && !!writelist && i >= currentStart && i < writelist.nextIndex;
 	$: batchEntryStart =
 		phase === "read-batch" && writelist
 			? writelist.count - (meta?.matches.length ?? 0)
@@ -98,14 +101,14 @@
 	// Naive mode: show the matches of the iteration's read phase
 	$: naiveMatches = (() => {
 		if (!state || deferred || !$timeline) return [] as MatchEvent[];
-		for (let i = $currentIndex; i >= 0; i--) {
+		for (let i = $displayIndex; i >= 0; i--) {
 			const s = $timeline.states[i];
 			if (s.phase === "read") return s.metadata.matches;
 			if (s.phase === "init") break;
 		}
 		return [] as MatchEvent[];
 	})();
-	$: appliedRule = phase === "write" ? meta?.applied : undefined;
+	$: appliedRewrites = phase === "write" ? meta?.applied ?? [] : [];
 
 	/** Highlight a match's LHS e-nodes and its e-class in the graph. */
 	function hoverMatch(nodes: number[], eclass: number) {
@@ -229,7 +232,7 @@
 							</div>
 						{:else}
 							{#each wlEntries.slice(0, MAX_ROWS) as entry, i (i)}
-								{@const status = !writelist || phase !== "write" ? (i >= batchEntryStart ? "new" : "pending") : i === currentEntry ? "current" : i < writelist.nextIndex ? "done" : "pending"}
+								{@const status = !writelist || phase !== "write" ? (i >= batchEntryStart ? "new" : "pending") : isCurrentEntry(i) ? "current" : i < writelist.nextIndex ? "done" : "pending"}
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
 								<div
 									class="wl-row {status}"
@@ -257,7 +260,7 @@
 							<div class="empty-message">No matches</div>
 						{:else}
 							{#each naiveMatches.slice(0, MAX_ROWS) as m, i (i)}
-								{@const current = !!appliedRule && appliedRule.rule === m.rule && appliedRule.lhsNodes[0] === m.nodes[0]}
+								{@const current = appliedRewrites.some((a) => a.rule === m.rule && a.lhsNodes[0] === m.nodes[0])}
 								<!-- svelte-ignore a11y_no_static_element_interactions -->
 								<div
 									class="wl-row"

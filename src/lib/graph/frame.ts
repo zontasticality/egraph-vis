@@ -9,8 +9,16 @@
  *  - e-classes only in A (merged away) slide into their canonical class and fade out;
  *  - e-nodes only in A (deduplicated) slide into the e-node they duplicate and fade out;
  *  - edges re-target smoothly when the e-class they point at changes.
+ *
+ * Deferred mode runs on parallel workers. Read phase: every read-batch
+ * snapshot has one worker per searched e-class. Between two batches the
+ * workers hop to their next e-class together, then scan beams sweep down all
+ * of them at once; e-nodes light up (and a tag with the rule name pops up) when
+ * a beam reaches the root of a match. See {@link READ_TIMING}. Write phase: the
+ * same workers hop to the e-classes their writelist entries target, and the
+ * right-hand sides they add appear once they have arrived.
  */
-import type { EGraphState, LayoutData, Rect, Phase, EClassViewModel } from '../engine/types';
+import type { EGraphState, LayoutData, Rect, Phase, EClassViewModel, MatchEvent } from '../engine/types';
 import { NodeStyleClass, EClassStyleClass } from '../engine/types';
 import { NODE_STYLES, ECLASS_STYLES, EDGE_COLORS, activeClassColors } from '../engine/visualStyles';
 import { edgeTargetClass, multiClassSets } from '../engine/layout';
@@ -50,6 +58,8 @@ export interface FrameClass {
     strokeWidth: number;
     dashed: boolean;
     style: EClassStyleClass;
+    /** Opacity of the "already searched in this read phase" check mark. */
+    searched: number;
 }
 
 export interface FrameSet {
@@ -71,13 +81,53 @@ export interface FrameEdge {
     color: string;
 }
 
+/** A parallel worker (deferred read and write phases). */
+export interface FrameWorker {
+    /** 0-based worker index. */
+    id: number;
+    /** E-class being searched or written to (the destination while hopping). */
+    classId: number;
+    /** 0 = searching (read phase), 1 = applying a rewrite (write phase); blends while switching. */
+    writing: number;
+    /** Badge center. */
+    x: number;
+    y: number;
+    scale: number;
+    opacity: number;
+    /** Scan beam sweeping down the searched e-class (only while a batch is being searched). */
+    scan: { rect: Rect; progress: number; opacity: number } | null;
+}
+
+/** "Found a match" tag shown above the root e-node of a match. */
+export interface FrameMatchTag {
+    key: string;
+    rule: string;
+    /** Center of the tag's bottom edge. */
+    x: number;
+    y: number;
+    scale: number;
+    opacity: number;
+}
+
 export interface Frame {
     sets: FrameSet[];
     classes: FrameClass[];
     nodes: FrameNode[];
     edges: FrameEdge[];
+    workers: FrameWorker[];
+    tags: FrameMatchTag[];
     bounds: Rect;
 }
+
+/**
+ * Timing (as fractions of a transition into a read-batch snapshot) of the
+ * parallel matching animation: workers hop to their e-class during
+ * [0, travelEnd], then all scan beams sweep down during [scanStart, scanEnd].
+ */
+export const READ_TIMING = { travelEnd: 0.4, scanStart: 0.4, scanEnd: 0.85 } as const;
+
+/** Tags are skipped when a batch finds more matches than this (unreadable clutter). */
+export const MAX_MATCH_TAGS = 80;
 
 interface Side {
     state: EGraphState;
@@ -122,6 +172,50 @@ function classLook(s: Side, id: number) {
     const active = style === EClassStyleClass.Active ? activeClassColors(s.state.phase as Phase) : null;
     return { style, ...base, ...active };
 }
+
+const clamp01 = (v: number) => Math.min(1, Math.max(0, v));
+const easeInOut = (u: number) => (u < 0.5 ? 2 * u * u : 1 - Math.pow(-2 * u + 2, 2) / 2);
+
+function readBatch(s: Side | null) {
+    return s && s.state.phase === 'read-batch' ? s.state.metadata.batch ?? null : null;
+}
+
+/** E-class each worker is busy with in snapshot `s` (index = worker), if workers are active. */
+export function workerTargets(s: Pick<Side, 'state'> | null): { classIds: number[]; writing: 0 | 1 } | null {
+    if (!s) return null;
+    const { phase, implementation, metadata: m } = s.state;
+    if (phase === 'read-batch' && m.batch) return { classIds: m.batch.classIds, writing: 0 };
+    const wl = m.writelist;
+    if (phase === 'write' && implementation === 'deferred' && wl && wl.batchStart !== undefined) {
+        const classIds: number[] = [];
+        for (let i = wl.batchStart; i < wl.nextIndex; i++) {
+            // Redundant entries kept their worker busy too, so they get one
+            const applied = m.applied?.find(a => a.entry === i);
+            classIds.push(applied ? applied.targetClass : s.state.unionFind[wl.entries[i].targetClass]?.canonical ?? wl.entries[i].targetClass);
+        }
+        return { classIds, writing: 1 };
+    }
+    return null;
+}
+
+/** E-classes searched by earlier batches of the read phase `s` is in. */
+function searchedBefore(s: Side | null): Set<number> {
+    const b = readBatch(s);
+    return new Set(b ? b.order.slice(0, b.index * b.size) : []);
+}
+
+/** Transition progress at which the scan beam reaches the root e-node of a match. */
+function foundTime(s: Side, m: MatchEvent): number {
+    const { scanStart, scanEnd } = READ_TIMING;
+    const cls = s.layout.classes.get(m.eclassId);
+    const root = m.nodes.length > 0 ? s.layout.nodes.get(m.nodes[0]) : undefined;
+    if (!cls || !root || cls.height <= 0) return scanEnd;
+    const fy = clamp01((root.y + root.height / 2 - cls.y) / cls.height);
+    return scanStart + fy * (scanEnd - scanStart);
+}
+
+/** Badge position of a worker searching the e-class drawn at `r` (straddles its top edge). */
+const badgeAt = (r: Rect) => ({ x: r.x + r.width - 22, y: r.y });
 
 // ─── Edge routing ────────────────────────────────────────────────────────
 
@@ -205,7 +299,17 @@ function buildFrame2(A: Side, B: Side | null, t: number, routing: EdgeRouting): 
     const classRects = new Map<number, Rect>();
     const nodeRects = new Map<number, { rect: Rect; opacity: number }>();
 
+    const batchA = readBatch(A);
+    const batchB = readBatch(B);
+    const workA = workerTargets(A);
+    const workB = workerTargets(B);
+    const { travelEnd, scanStart, scanEnd } = READ_TIMING;
+    // Writes appear once the workers applying them have arrived
+    const appear = workB?.writing ? (u: number) => clamp01((u - travelEnd) / (1 - travelEnd)) : (u: number) => u;
+
     // --- e-classes ---
+    const searchedA = searchedBefore(A);
+    const searchedB = searchedBefore(B);
     const classIds = new Set<number>([...A.classIds, ...(B?.classIds ?? [])]);
     for (const id of Array.from(classIds).sort((x, y) => x - y)) {
         const inA = A.classIds.has(id) && A.layout.classes.has(id);
@@ -224,24 +328,34 @@ function buildFrame2(A: Side, B: Side | null, t: number, routing: EdgeRouting): 
             opacity = 1 - t;
         } else {
             const end = B!.layout.classes.get(id)!;
-            rect = lerpRect(shrink(end, 0.6), end, t);
-            opacity = t;
+            rect = lerpRect(shrink(end, 0.6), end, appear(t));
+            opacity = appear(t);
         }
 
         const lookA = inA ? classLook(A, id) : null;
         const lookB = inB ? classLook(B!, id) : null;
         const from = lookA ?? lookB!;
         const to = lookB ?? lookA!;
+        // Searching outlines follow the workers: on when one arrives, off as it leaves
+        const searching = EClassStyleClass.Searching;
+        const ts = to.style === searching && from.style !== searching
+            ? clamp01((t - travelEnd / 2) / (travelEnd / 2))
+            : from.style === searching && to.style !== searching
+                ? clamp01(t / (travelEnd * 0.6))
+                : t;
+        const checkA = searchedA.has(id) ? 1 : 0;
+        const checkB = B ? (searchedB.has(id) ? 1 : 0) : checkA;
         classes.push({
             id,
             canonical: canonicalOf(B && t >= 0.5 && inB ? B : A, id),
             rect,
-            opacity: opacity * lerp(from.opacity, to.opacity, t),
-            fill: mixColor(from.fill, to.fill, t),
-            stroke: mixColor(from.stroke, to.stroke, t),
-            strokeWidth: lerp(from.strokeWidth, to.strokeWidth, t),
-            dashed: t < 0.5 ? from.dashed : to.dashed,
-            style: t < 0.5 ? from.style : to.style
+            opacity: opacity * lerp(from.opacity, to.opacity, ts),
+            fill: mixColor(from.fill, to.fill, ts),
+            stroke: mixColor(from.stroke, to.stroke, ts),
+            strokeWidth: lerp(from.strokeWidth, to.strokeWidth, ts),
+            dashed: ts < 0.5 ? from.dashed : to.dashed,
+            style: ts < 0.5 ? from.style : to.style,
+            searched: lerp(checkA, checkB, clamp01(t / travelEnd))
         });
         classRects.set(id, rect);
     }
@@ -270,13 +384,21 @@ function buildFrame2(A: Side, B: Side | null, t: number, routing: EdgeRouting): 
             // a union just happened: wrap around where the member classes were
             const before = unionRects(membersB!.map(m => A.layout.classes.get(m)).filter((r): r is Rect => !!r));
             const start = before ? padRect(before, SET_PADDING) : rectB!;
-            rect = lerpRect(start, rectB!, t);
-            opacity = t;
+            rect = lerpRect(start, rectB!, appear(t));
+            opacity = appear(t);
         }
         sets.push({ id, members: (membersB ?? membersA)!, rect, opacity });
     }
 
     // --- e-nodes ---
+    // Matches of an incoming read batch light up when the scan beam reaches them
+    const foundAt = new Map<number, number>();
+    if (batchB) {
+        for (const m of B!.state.metadata.matches) {
+            const tf = foundTime(B!, m);
+            for (const n of m.nodes) foundAt.set(n, Math.min(foundAt.get(n) ?? 1, tf));
+        }
+    }
     const removedInB = new Map<number, number>();
     if (B) {
         for (const d of B.state.metadata.diffs) if (d.type === 'remove') removedInB.set(d.nodeId, d.duplicateOf);
@@ -300,14 +422,21 @@ function buildFrame2(A: Side, B: Side | null, t: number, routing: EdgeRouting): 
             rect = lerpRect(ra, end, t);
             opacity = 1 - t;
         } else {
-            rect = lerpRect(shrink(rb!, 0.4), rb!, Math.min(1, t * 1.5));
-            opacity = t;
+            rect = lerpRect(shrink(rb!, 0.4), rb!, Math.min(1, appear(t) * 1.5));
+            opacity = appear(t);
         }
 
         const styleA = ea ? nodeStyleOf(A, id) : undefined;
         const styleB = eb ? nodeStyleOf(B!, id) : undefined;
         const from = NODE_STYLES[styleA ?? styleB!];
         const to = NODE_STYLES[styleB ?? styleA!];
+        const matched = NodeStyleClass.MatchedLHS;
+        const found = foundAt.get(id);
+        const ts = found !== undefined && styleB === matched && styleA !== matched
+            ? clamp01((t - found) / 0.08)
+            : batchA && styleA === matched && styleB !== matched
+                ? clamp01(t / travelEnd)
+                : t;
         const entry = (t >= 0.5 ? eb : ea) ?? ea ?? eb!;
         const entrySide = entry === eb ? B! : A;
         nodes.push({
@@ -318,11 +447,11 @@ function buildFrame2(A: Side, B: Side | null, t: number, routing: EdgeRouting): 
             argCanonical: entry.node.args.map(a => canonicalOf(entrySide, a)),
             rect,
             opacity,
-            fill: mixColor(from.fill, to.fill, t),
-            stroke: mixColor(from.stroke, to.stroke, t),
-            text: mixColor(from.text, to.text, t),
-            dashed: t < 0.5 ? from.dashed : to.dashed,
-            style: (t < 0.5 ? styleA ?? styleB : styleB ?? styleA)!
+            fill: mixColor(from.fill, to.fill, ts),
+            stroke: mixColor(from.stroke, to.stroke, ts),
+            text: mixColor(from.text, to.text, ts),
+            dashed: ts < 0.5 ? from.dashed : to.dashed,
+            style: (ts < 0.5 ? styleA ?? styleB : styleB ?? styleA)!
         });
         nodeRects.set(id, { rect, opacity });
 
@@ -368,10 +497,77 @@ function buildFrame2(A: Side, B: Side | null, t: number, routing: EdgeRouting): 
         }
     }
 
+    // --- parallel workers ---
+    const workers: FrameWorker[] = [];
+    const sameIteration = !!workA && !!workB && A.state.metadata.iteration === B!.state.metadata.iteration;
+    const scanOf = (rect: Rect): FrameWorker['scan'] => ({
+        rect,
+        progress: clamp01((t - scanStart) / (scanEnd - scanStart)),
+        opacity: t < scanStart ? 0 : 1 - clamp01((t - scanEnd) / (1 - scanEnd))
+    });
+    const workerCount = Math.max(workA?.classIds.length ?? 0, workB?.classIds.length ?? 0);
+    for (let w = 0; w < workerCount; w++) {
+        const ca = workA?.classIds[w];
+        const cb = workB?.classIds[w];
+        const ra = ca !== undefined ? classRects.get(ca) : undefined;
+        const rb = cb !== undefined ? classRects.get(cb) : undefined;
+        const scan = batchB && rb ? scanOf(rb) : null;
+        if (!B) {
+            if (ra) workers.push({ id: w, classId: ca!, writing: workA!.writing, ...badgeAt(ra), scale: 1, opacity: 1, scan: null });
+        } else if (ra && rb && sameIteration) {
+            // Hop to the next e-class (all workers move together)
+            const u = easeInOut(clamp01(t / travelEnd));
+            const pa = badgeAt(ra), pb = badgeAt(rb);
+            const hop = Math.sin(Math.PI * u) * Math.min(48, 14 + Math.hypot(pb.x - pa.x, pb.y - pa.y) * 0.15);
+            workers.push({
+                id: w, classId: cb!, writing: lerp(workA!.writing, workB!.writing, u),
+                x: lerp(pa.x, pb.x, u), y: lerp(pa.y, pb.y, u) - hop, scale: 1, opacity: 1, scan
+            });
+        } else if (rb) {
+            // The worker appears on its first e-class
+            const u = clamp01(t / (travelEnd * 0.9));
+            workers.push({ id: w, classId: cb!, writing: workB!.writing, ...badgeAt(rb), scale: 0.5 + 0.5 * u, opacity: u, scan });
+        } else if (ra) {
+            // Nothing left to do (phase over, or a short last batch)
+            const u = clamp01(t / (travelEnd * 0.9));
+            workers.push({ id: w, classId: ca!, writing: workA!.writing, ...badgeAt(ra), scale: 1 - 0.4 * u, opacity: 1 - u, scan: null });
+        }
+    }
+
+    // --- match tags ---
+    const tags: FrameMatchTag[] = [];
+    const tagsOf = (s: Side, place: (key: string, rule: string, x: number, y: number, m: MatchEvent) => void) => {
+        const matches = s.state.metadata.matches;
+        if (matches.length > MAX_MATCH_TAGS) return;
+        const stacked = new Map<number, number>();
+        matches.forEach((m, i) => {
+            const root = m.nodes[0];
+            const r = root !== undefined ? nodeRects.get(root)?.rect ?? s.layout.nodes.get(root) : undefined;
+            const c = classRects.get(m.eclassId) ?? s.layout.classes.get(m.eclassId);
+            if (!c) return;
+            // Just above the e-class box (clear of its label and the worker badge), over the root e-node
+            const anchor = { x: r ? r.x + r.width / 2 : c.x + c.width / 2, y: c.y - 12 };
+            const level = stacked.get(root ?? -1) ?? 0;
+            stacked.set(root ?? -1, level + 1);
+            place(`${s.state.stepIndex}:${i}`, m.rule, anchor.x, anchor.y - level * 16, m);
+        });
+    };
+    if (batchA) {
+        // Settled on a batch: show what it found. Leaving it: the tags lift off into the writelist.
+        const u = B ? easeInOut(clamp01(t / travelEnd)) : 0;
+        tagsOf(A, (key, rule, x, y) => tags.push({ key, rule, x, y: y - 28 * u, scale: 1, opacity: 1 - u }));
+    }
+    if (batchB) {
+        tagsOf(B!, (key, rule, x, y, m) => {
+            const u = clamp01((t - foundTime(B!, m)) / 0.1);
+            if (u > 0) tags.push({ key, rule, x, y: y + 6 * (1 - u), scale: 0.7 + 0.3 * u, opacity: u });
+        });
+    }
+
     const bounds = unionRects([
         ...classes.map(c => c.rect),
         ...sets.map(s => s.rect)
     ]) ?? { x: 0, y: 0, width: 0, height: 0 };
 
-    return { sets, classes, nodes, edges, bounds };
+    return { sets, classes, nodes, edges, workers, tags, bounds };
 }

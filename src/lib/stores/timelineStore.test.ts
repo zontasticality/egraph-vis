@@ -5,6 +5,8 @@ import {
     timelinePosition,
     currentIndex,
     currentState,
+    displayIndex,
+    displayState,
     scrubData,
     engineError,
     currentPreset,
@@ -20,7 +22,9 @@ import {
     stop,
     setSpeed,
     findPhaseBoundary,
+    realTimeRate,
 } from './timelineStore';
+import { comparisonConfigs, labelOf } from './benchmarkStore';
 import { PRESETS } from '../presets';
 import { preset } from '../test/helpers';
 import type { EGraphState } from '../engine/types';
@@ -100,6 +104,19 @@ describe('timelineStore', () => {
         expect(get(scrubData).isScrubbing).toBe(false);
     });
 
+    it('describes the step being animated into', () => {
+        scrubTo(2.25);
+        expect(get(currentIndex)).toBe(2);
+        expect(get(displayIndex)).toBe(3);
+        expect(get(displayState)!.stepIndex).toBe(3);
+        scrubTo(3);
+        expect(get(displayIndex)).toBe(3);
+        scrubTo(0);
+        expect(get(displayIndex)).toBe(0);
+        scrubTo(0.01);
+        expect(get(displayIndex)).toBe(1);
+    });
+
     it('jumps between phase boundaries', () => {
         const states = get(timeline)!.states;
         nextPhase(); // init -> first read batch
@@ -161,5 +178,22 @@ describe('findPhaseBoundary', () => {
         expect(findPhaseBoundary(states, 3, -1)).toBe(1);
         expect(findPhaseBoundary(states, 1, -1)).toBe(0);
         expect(findPhaseBoundary(states, 0, -1)).toBe(0);
+    });
+});
+
+describe('execution time', () => {
+    it('plays the whole run in as long as step-by-step playback, at a constant rate', () => {
+        // 4 steps taking 1 + 3 + 0 + 4 = 8 ms of execution, 500 ms per step → 2 s for 8 ms
+        expect(realTimeRate([0, 1, 3, 0, 4], 500)).toBeCloseTo(8 / 2000);
+        expect(realTimeRate([0], 500)).toBe(0);
+        expect(realTimeRate([0, 0, 0], 500)).toBe(0);
+    });
+
+    it('compares naive with deferred on one and on the selected number of workers', () => {
+        const configs = comparisonConfigs({ implementation: 'naive', parallelism: 4, seed: 3 }, 4);
+        expect(configs.map(labelOf)).toEqual(['Naive', 'Deferred ×1', 'Deferred ×4']);
+        configs.forEach(c => expect(c.seed).toBe(3));
+        expect(comparisonConfigs({ implementation: 'deferred', parallelism: 1 }, 1).map(labelOf)).toEqual(['Naive', 'Deferred ×1']);
+        expect(labelOf({ implementation: 'naive', parallelism: 8 })).toBe('Naive');
     });
 });

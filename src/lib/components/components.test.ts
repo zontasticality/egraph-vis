@@ -7,7 +7,8 @@ import Controller from './Controller.svelte';
 import RewriteRulesPanel from './graph_pane/RewriteRulesPanel.svelte';
 import SingleRewriteRuleEditor from './editors/SingleRewriteRuleEditor.svelte';
 import GraphCanvas from './graph_pane/GraphCanvas.svelte';
-import { loadPreset, goToStep, stop, timeline, currentIndex } from '../stores/timelineStore';
+import { loadPreset, goToStep, stop, timeline, currentIndex, timeScaleMode, executionSpans } from '../stores/timelineStore';
+import { executionTiming } from '../stores/benchmarkStore';
 import { exitEditMode, isEditing, draftPreset } from '../stores/presetEditorStore';
 import { layoutManager } from '../engine/layout';
 import { PRESETS } from '../presets';
@@ -22,6 +23,7 @@ function indexOfPhase(phase: string, nth = 0) {
 beforeEach(async () => {
     stop();
     exitEditMode();
+    timeScaleMode.set('steps');
     await loadPreset(paper, { implementation: 'deferred', parallelism: 2 });
 });
 
@@ -36,9 +38,11 @@ describe('StatePane', () => {
 
     it('shows the writelist, union-find and worklist while writing', async () => {
         render(StatePane);
-        goToStep(indexOfPhase('write', 1), true);
+        // Two workers apply both writelist entries at once
+        goToStep(indexOfPhase('write', 0), true);
         await waitFor(() => expect(screen.getByRole('heading', { name: /Writelist/ })).toHaveTextContent('Writelist 2'));
         expect(screen.getByText('applied 2/2')).toBeInTheDocument();
+        expect(screen.getByText('mul-to-shift').closest('.wl-row')).toHaveClass('current');
         expect(screen.getByText('factor-out-div').closest('.wl-row')).toHaveClass('current');
         expect(screen.getByRole('heading', { name: /Worklist/ })).toHaveTextContent('Worklist 2');
         expect(document.querySelectorAll('.uf-row').length).toBe(2);
@@ -59,7 +63,33 @@ describe('Controller', () => {
         await waitFor(() => expect(screen.getByText(/Searching e-class/)).toBeInTheDocument());
 
         await fireEvent.click(screen.getByRole('button', { name: 'Next phase' }));
-        await waitFor(() => expect(screen.getByText(/Applying mul-to-shift/)).toBeInTheDocument());
+        await waitFor(() => expect(screen.getByText(/2 workers apply in parallel: mul-to-shift/)).toBeInTheDocument());
+    });
+
+    it('measures execution time and compares it with naive in time mode', async () => {
+        render(Controller);
+        await fireEvent.keyDown(window, { key: 't' });
+        expect(get(timeScaleMode)).toBe('time');
+        await waitFor(() => expect(screen.getByText('measuring…')).toBeInTheDocument());
+
+        // The timeline's own benchmark gives the playhead clock and real-time playback spans...
+        await waitFor(() => expect(get(executionSpans)?.length).toBe(get(timeline)!.states.length), { timeout: 5000 });
+        expect(document.querySelector('.exec-clock')!.textContent).toMatch(/^0 \/ [\d.]+ (ns|µs|ms)$/);
+
+        // ...and the comparison names the three configurations
+        await waitFor(() => expect(get(executionTiming)!.compare.every(c => c.status === 'ready')).toBe(true), { timeout: 5000 });
+        expect(get(executionTiming)!.compare.map(c => c.label)).toEqual(['Naive', 'Deferred ×1', 'Deferred ×2']);
+        const chip = await screen.findByRole('button', { name: /(faster|slower) than naive/ });
+        await fireEvent.click(chip);
+        const panel = screen.getByRole('dialog', { name: 'Execution time comparison' });
+        const rows = within(panel).getAllByRole('row').map(r => r.querySelector('th')!.textContent!.trim());
+        expect(rows).toEqual(['Stage', 'Read', 'Write', 'Rebuild', 'Total']);
+        await fireEvent.keyDown(window, { key: 'Escape' });
+        expect(screen.queryByRole('dialog')).toBeNull();
+
+        await fireEvent.click(screen.getByRole('radio', { name: 'Steps' }));
+        expect(get(timeScaleMode)).toBe('steps');
+        expect(document.querySelector('.exec')).toBeNull();
     });
 
     it('responds to keyboard shortcuts', async () => {
@@ -138,7 +168,7 @@ describe('GraphCanvas', () => {
         expect(document.querySelectorAll('g.eclass').length).toBe(4);
         expect(document.querySelectorAll('path.edge').length).toBe(4);
 
-        const w = indexOfPhase('write', 1);
+        const w = indexOfPhase('write', 0);
         goToStep(w, true);
         await layoutManager.whenReady(w);
         await waitFor(() => expect(document.querySelectorAll('g.uf-set').length).toBe(2));

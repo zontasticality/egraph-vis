@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { currentState, currentPreset } from "../../stores/timelineStore";
+    import { displayState, currentPreset } from "../../stores/timelineStore";
     import {
         isEditing,
         draftPreset,
@@ -19,18 +19,19 @@
     // Match counts (read phases) and the rule being applied (write phase)
     $: matchCounts = (() => {
         const counts = new Map<string, number>();
-        const phase = $currentState?.phase;
+        const phase = $displayState?.phase;
         if (phase === "read" || phase === "read-batch") {
-            for (const m of $currentState!.metadata.matches) {
+            for (const m of $displayState!.metadata.matches) {
                 counts.set(m.rule, (counts.get(m.rule) ?? 0) + 1);
             }
         }
         return counts;
     })();
-    $: appliedRule =
-        $currentState?.phase === "write"
-            ? $currentState.metadata.applied?.rule
-            : undefined;
+    $: appliedRules = new Set(
+        $displayState?.phase === "write"
+            ? ($displayState.metadata.applied ?? []).map((a) => a.rule)
+            : [],
+    );
 
     // --- Editing Logic ---
     let editingRuleIndex: number | null = null;
@@ -136,7 +137,7 @@
                 <div
                     class="rule-chip"
                     class:highlight-lhs={count > 0}
-                    class:highlight-rhs={appliedRule === rule.name}
+                    class:highlight-rhs={appliedRules.has(rule.name)}
                     class:disabled={!rule.enabled}
                 >
                     <div class="rule-top">
@@ -153,7 +154,7 @@
                                 >{count} match{count === 1 ? "" : "es"}</span
                             >
                         {/if}
-                        {#if appliedRule === rule.name}
+                        {#if appliedRules.has(rule.name)}
                             <span class="badge apply">applying</span>
                         {/if}
                         <span class="chip-actions">

@@ -27,8 +27,10 @@ export function computeVisualStates(state: Pick<EGraphState, 'phase' | 'metadata
     if (phase === 'read' || phase === 'read-batch') {
         metadata.matches.forEach(m => m.nodes.forEach(id => matched.add(id)));
     } else if (phase === 'write' && metadata.applied) {
-        metadata.applied.lhsNodes.forEach(id => matched.add(id));
-        metadata.applied.newNodes.forEach(id => created.add(id));
+        for (const a of metadata.applied) {
+            a.lhsNodes.forEach(id => matched.add(id));
+            a.newNodes.forEach(id => created.add(id));
+        }
     } else if (phase === 'repair') {
         metadata.repairedNodes?.forEach(id => repairing.add(id));
     }
@@ -50,11 +52,14 @@ export function computeVisualStates(state: Pick<EGraphState, 'phase' | 'metadata
     }
 
     const worklist = new Set(state.worklist);
+    const searching = new Set(phase === 'read-batch' ? metadata.batch?.classIds ?? [] : []);
     for (const eclass of state.eclasses) {
         const canonical = isCanonical(eclass.id);
         let styleClass = ESC.Default;
         if (!canonical) {
             styleClass = ESC.Merged;
+        } else if (searching.has(eclass.id)) {
+            styleClass = ESC.Searching;
         } else if ((phase === 'repair' || phase === 'compact') && eclass.id === metadata.activeId) {
             styleClass = ESC.Active;
         } else if (worklist.has(eclass.id)) {

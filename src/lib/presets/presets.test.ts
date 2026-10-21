@@ -9,6 +9,16 @@ import type { Implementation } from '../engine/types';
 const MODES: Implementation[] = ['naive', 'deferred'];
 
 describe('built-in presets', () => {
+    it('parallel-matching gives several workers a match in the same batch', () => {
+        const pm = PRESETS.find(p => p.id === 'parallel-matching')!;
+        const parallelism = pm.implementationHints!.parallelism!;
+        const { timeline } = run(pm, { implementation: 'deferred', parallelism });
+        const busiest = Math.max(...timeline.states
+            .filter(s => s.phase === 'read-batch')
+            .map(s => new Set(s.metadata.matches.map(m => m.eclassId)).size));
+        expect(busiest).toBeGreaterThanOrEqual(3);
+    });
+
     it('have unique ids and labels', () => {
         expect(new Set(PRESETS.map(p => p.id)).size).toBe(PRESETS.length);
         expect(new Set(PRESETS.map(p => p.label)).size).toBe(PRESETS.length);

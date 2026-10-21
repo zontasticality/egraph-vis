@@ -42,7 +42,8 @@
     import Modal from "$lib/components/editors/Modal.svelte";
 
     let isDeferred = true;
-    let parallelism = 2; // Default parallelism for deferred mode
+    let parallelism = 2; // Workers searching e-classes and applying rewrites in parallel (deferred mode)
+    const PARALLELISM_OPTIONS = [1, 2, 4, 8, 16, 32];
     let showImplDropdown = false; // For custom dropdown
     let paneLayout = [60, 40]; // Default split
     let ready = false;
@@ -71,9 +72,10 @@
               : "";
 
     function engineOptions(): EngineOptions {
+        // Naive mode ignores the workers; they are passed along for the execution-time comparison
         return {
             implementation: isDeferred ? "deferred" : "naive",
-            parallelism: isDeferred ? parallelism : 1,
+            parallelism,
         };
     }
 
@@ -111,18 +113,20 @@
             pendingPresetId = newId;
             showUnsavedChangesDialog = true;
         } else {
-            selectedPresetId = newId;
-            exitEditMode(); // Clean exit if no changes or not dirty
-            reload();
+            selectPreset(newId);
         }
     }
 
+    function selectPreset(id: string) {
+        selectedPresetId = id;
+        const hint = getPresetById(id)?.implementationHints?.parallelism;
+        if (hint && PARALLELISM_OPTIONS.includes(hint)) parallelism = hint;
+        exitEditMode(); // Clean exit if no changes or not dirty
+        reload();
+    }
+
     function confirmDiscardChanges() {
-        if (pendingPresetId) {
-            selectedPresetId = pendingPresetId;
-            exitEditMode();
-            reload();
-        }
+        if (pendingPresetId) selectPreset(pendingPresetId);
         showUnsavedChangesDialog = false;
         pendingPresetId = null;
     }
@@ -458,7 +462,7 @@
                         class="toggle-label {isDeferred ? 'active' : ''} deferred-button"
                         on:click={toggleParallelismDropdown}
                         aria-label="Select Deferred Parallelism"
-                        title="Deferred (egg): read all matches, apply them, then rebuild once"
+                        title="Deferred (egg): {parallelism} worker{parallelism === 1 ? '' : 's'} search for matches and apply the rewrites in parallel, then the e-graph is rebuilt once"
                     >
                         Deferred x{parallelism}
                         <svg
@@ -478,37 +482,19 @@
                     </button>
 
                     {#if showImplDropdown && isDeferred}
-                        <div class="parallelism-menu">
-                            <button
-                                class="parallelism-option {parallelism === 2 ? 'active' : ''}"
-                                on:click={() => handleParallelismSelect(2)}
-                            >
-                                x2
-                            </button>
-                            <button
-                                class="parallelism-option {parallelism === 4 ? 'active' : ''}"
-                                on:click={() => handleParallelismSelect(4)}
-                            >
-                                x4
-                            </button>
-                            <button
-                                class="parallelism-option {parallelism === 8 ? 'active' : ''}"
-                                on:click={() => handleParallelismSelect(8)}
-                            >
-                                x8
-                            </button>
-                            <button
-                                class="parallelism-option {parallelism === 16 ? 'active' : ''}"
-                                on:click={() => handleParallelismSelect(16)}
-                            >
-                                x16
-                            </button>
-                            <button
-                                class="parallelism-option {parallelism === 32 ? 'active' : ''}"
-                                on:click={() => handleParallelismSelect(32)}
-                            >
-                                x32
-                            </button>
+                        <div class="parallelism-menu" role="menu" aria-label="Parallel workers">
+                            <div class="parallelism-title">Parallel workers</div>
+                            {#each PARALLELISM_OPTIONS as n}
+                                <button
+                                    class="parallelism-option {parallelism === n ? 'active' : ''}"
+                                    role="menuitemradio"
+                                    aria-checked={parallelism === n}
+                                    title={n === 1 ? "One worker: search one e-class (or apply one rewrite) at a time" : `${n} workers: search ${n} e-classes (or apply ${n} rewrites) at the same time`}
+                                    on:click={() => handleParallelismSelect(n)}
+                                >
+                                    x{n}
+                                </button>
+                            {/each}
                         </div>
                     {/if}
                 </div>
@@ -924,6 +910,16 @@
             opacity: 1;
             transform: translateX(-50%) translateY(0);
         }
+    }
+
+    .parallelism-title {
+        font-size: 0.65rem;
+        font-weight: 700;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: #9ca3af;
+        padding: 0 0.5rem 0.3rem;
+        white-space: nowrap;
     }
 
     .parallelism-option {

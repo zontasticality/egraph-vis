@@ -48,13 +48,38 @@ describe('computeVisualStates', () => {
         expect(v.nodes.get(0)!.styleClass).toBe(N.MatchedLHS);
     });
 
+    it('marks the e-classes the current read batch searches', () => {
+        const batch = { index: 1, total: 2, classIds: [2, 3], size: 2, order: [0, 1, 2, 3] };
+        const v = computeVisualStates({ ...base, worklist: [], phase: 'read-batch', metadata: meta({ batch }) });
+        expect(v.eclasses.get(2)!.styleClass).toBe(E.Searching);
+        expect(v.eclasses.get(3)!.styleClass).toBe(E.Searching);
+        expect(v.eclasses.get(0)!.styleClass).toBe(E.Default);
+        const w = computeVisualStates({ ...base, worklist: [], phase: 'write', metadata: meta({ batch }) });
+        expect(w.eclasses.get(2)!.styleClass).toBe(E.Default);
+    });
+
     it('prioritizes new nodes over matched nodes while writing', () => {
         const v = computeVisualStates({
             ...base, phase: 'write',
-            metadata: meta({ applied: { rule: 'r', targetClass: 2, createdId: 3, newNodes: [3], lhsNodes: [2, 3] } })
+            metadata: meta({ applied: [{ rule: 'r', targetClass: 2, createdId: 3, newNodes: [3], lhsNodes: [2, 3], worker: 0 }] })
         });
         expect(v.nodes.get(3)!.styleClass).toBe(N.NewNode);
         expect(v.nodes.get(2)!.styleClass).toBe(N.MatchedLHS);
+    });
+
+    it('highlights every rewrite applied by parallel workers', () => {
+        const v = computeVisualStates({
+            ...base, phase: 'write',
+            metadata: meta({
+                applied: [
+                    { rule: 'r', targetClass: 0, createdId: 3, newNodes: [3], lhsNodes: [0], worker: 0 },
+                    { rule: 'r', targetClass: 1, createdId: 2, newNodes: [], lhsNodes: [1], worker: 1 }
+                ]
+            })
+        });
+        expect(v.nodes.get(3)!.styleClass).toBe(N.NewNode);
+        expect(v.nodes.get(0)!.styleClass).toBe(N.MatchedLHS);
+        expect(v.nodes.get(1)!.styleClass).toBe(N.MatchedLHS);
     });
 
     it('highlights the active class and repaired parents', () => {

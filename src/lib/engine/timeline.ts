@@ -9,7 +9,9 @@ import {
 } from './algorithms';
 import { computeVisualStates } from './visual';
 import { assertInvariants } from './invariants';
+import { WorkLog, type Clock, type WorkKind, type WorkSegment } from './work';
 import type {
+    AppliedRewrite,
     EGraphEngine,
     EGraphTimeline,
     EGraphState,
@@ -39,10 +41,25 @@ export const DEFAULT_LIMITS = {
 
 type SnapshotExtras = Partial<Omit<StepMetadata, 'iteration' | 'diffs' | 'invariants' | 'selectionHints' | 'timestamp'>>;
 
+export interface TimelineEngineConfig {
+    /**
+     * Record snapshots (default). Without them the engine only runs the
+     * algorithm and its work log: used to benchmark it.
+     */
+    snapshots?: boolean;
+    /** Clock used to time the work (ms). */
+    clock?: Clock;
+    /** Cost of an empty timed region on `clock` (see `clockOverhead`), subtracted from every measurement. */
+    clockOverhead?: number;
+}
+
 /**
  * Runs equality saturation once and records an immutable snapshot after every
  * unit of work. Snapshots share unchanged sub-structures with their
  * predecessors (union-find entries, node chunks, hashcons, view models).
+ *
+ * Every task of the algorithm is also timed into a {@link WorkLog}: `getWork()[i]`
+ * is the work that produced snapshot i. Snapshot bookkeeping is not timed.
  */
 export class TimelineEngine implements EGraphEngine {
     private runtime = new EGraphRuntime();
@@ -52,13 +69,23 @@ export class TimelineEngine implements EGraphEngine {
     private rng?: SeededRandom;
     private rewrites: RewriteRule[] = [];
     private iteration = 0;
+    private readonly snapshots: boolean;
+    private readonly clock?: Clock;
+    private readonly clockOverhead: number;
+    private work: WorkLog;
+    private stepCount = 0;
+    private phases: Phase[] = [];
 
     // Structural-sharing caches (previous snapshot's pieces)
     private viewModelCache = new Map<number, { version: number; vm: EClassViewModel }>();
     private emittedNodes: ENode[] = [];
     private hashconsCache?: { signature: string; entries: HashconsEntry[] };
 
-    constructor() {
+    constructor(config: TimelineEngineConfig = {}) {
+        this.snapshots = config.snapshots ?? true;
+        this.clock = config.clock;
+        this.clockOverhead = config.clockOverhead ?? 0;
+        this.work = new WorkLog(this.clock, this.clockOverhead);
         this.timeline = this.createEmptyTimeline();
     }
 
@@ -80,9 +107,12 @@ export class TimelineEngine implements EGraphEngine {
         this.hashconsCache = undefined;
         this.iteration = 0;
         this.timeline = this.createEmptyTimeline();
+        this.work = new WorkLog(this.clock, this.clockOverhead);
+        this.stepCount = 0;
+        this.phases = [];
         this.rng = this.options.seed !== undefined ? new SeededRandom(this.options.seed) : undefined;
 
-        this.instantiateRoot(preset.root);
+        this.work.time('init', () => this.instantiateRoot(preset.root));
         this.emitSnapshot('init');
     }
 
@@ -112,7 +142,7 @@ export class TimelineEngine implements EGraphEngine {
         }
 
         this.timeline.haltedReason = halted;
-        this.emitSnapshot('done', { haltedReason: halted });
+        this.emitSnapshot('done', () => ({ haltedReason: halted }));
         return this.timeline;
     }
 
@@ -125,18 +155,31 @@ export class TimelineEngine implements EGraphEngine {
         return this.runtime;
     }
 
+    /** Work that produced each snapshot (`getWork()[i]` belongs to snapshot i). */
+    getWork(): WorkSegment[][] {
+        return this.work.steps;
+    }
+
+    /** Phase of every snapshot emitted so far (also recorded without snapshots). */
+    getPhases(): Phase[] {
+        return this.phases;
+    }
+
     // ─── Iterations ────────────────────────────────────────────────────────
 
     /**
      * Deferred (egg-style) iteration: read every match into a writelist,
-     * apply them all, then rebuild once.
+     * apply them all, then rebuild once. Both the read and the write phase run
+     * on `parallelism` workers in lock-step rounds: each round searches one
+     * e-class (or applies one writelist entry) per worker.
      */
     private runDeferredIteration(): HaltReason | undefined {
         const entries: WriteListEntry[] = [];
-        const parallelism = this.options.parallelism ?? 1;
+        const parallelism = Math.max(1, Math.floor(this.options.parallelism ?? 1));
 
         // --- READ: pure, batch by batch ---
-        for (const batch of collectMatchesGen(this.runtime, this.rewrites, parallelism)) {
+        for (const batch of collectMatchesGen(this.runtime, this.rewrites, parallelism, this.work)) {
+            this.work.parallel('read', batch.taskTimes, parallelism);
             for (const match of batch.matches) {
                 entries.push({
                     ruleName: match.rule.name,
@@ -147,57 +190,78 @@ export class TimelineEngine implements EGraphEngine {
                     lhsNodes: match.nodes
                 });
             }
-            this.emitSnapshot('read-batch', {
+            this.emitSnapshot('read-batch', () => ({
                 matches: batch.matches.map(toMatchEvent),
-                batch: { index: batch.batchId, total: batch.totalBatches, classIds: batch.classIds },
+                batch: {
+                    index: batch.batchId,
+                    total: batch.totalBatches,
+                    classIds: batch.classIds,
+                    size: batch.size,
+                    order: batch.order
+                },
                 writelist: { entries, count: entries.length, nextIndex: 0 }
-            });
+            }));
         }
 
         if (entries.length === 0) return 'saturated';
 
-        // --- WRITE: consume the writelist sequentially ---
+        // --- WRITE: one writelist entry per worker and round ---
+        // Rounds whose rewrites were all redundant produce no snapshot; their
+        // work is carried into the next one.
         let changed = false;
         let stopped: HaltReason | undefined;
-        for (let i = 0; i < entries.length; i++) {
-            stopped = this.limitReached();
-            if (stopped) break;
+        for (let start = 0; start < entries.length && !stopped; start += parallelism) {
+            const lanes: number[] = [];
+            const applied: AppliedRewrite[] = [];
+            let end = start;
+            for (let i = start; i < Math.min(start + parallelism, entries.length); i++) {
+                stopped = this.limitReached();
+                if (stopped) break;
 
-            const entry = entries[i];
-            const result = applyRewrite(
-                this.runtime, entry.ruleName, entry.rhsPattern, entry.targetClass,
-                entry.substitution, 'deferred', this.rng
-            );
-            if (!result.changed) continue;
-            changed = true;
-
-            this.emitSnapshot('write', {
-                matches: [{ rule: entry.ruleName, eclassId: result.target, nodes: entry.lhsNodes }],
-                applied: {
+                const entry = entries[i];
+                const t0 = this.work.clock();
+                const result = applyRewrite(
+                    this.runtime, entry.ruleName, entry.rhsPattern, entry.targetClass,
+                    entry.substitution, 'deferred', this.rng
+                );
+                lanes.push(this.work.since(t0));
+                end = i + 1;
+                if (!result.changed) continue;
+                applied.push({
                     rule: entry.ruleName,
                     targetClass: result.target,
                     createdId: result.createdId,
                     newNodes: result.newNodes,
-                    lhsNodes: entry.lhsNodes
-                },
-                writelist: { entries, count: entries.length, nextIndex: i + 1 }
-            });
+                    lhsNodes: entry.lhsNodes,
+                    worker: i - start,
+                    entry: i
+                });
+            }
+            this.work.parallel('write', lanes, parallelism);
+            if (applied.length === 0) continue;
+            changed = true;
+
+            this.emitSnapshot('write', () => ({
+                matches: applied.map(a => ({ rule: a.rule, eclassId: a.targetClass, nodes: a.lhsNodes })),
+                applied,
+                writelist: { entries, count: entries.length, nextIndex: end, batchStart: start }
+            }));
         }
 
         if (!changed) return stopped ?? 'saturated';
 
         // --- REBUILD ---
-        this.runRebuild();
+        this.runRebuild(true);
         return stopped;
     }
 
     /**
      * Naive iteration: collect matches, then apply them one at a time and
-     * restore invariants immediately after each union.
+     * restore invariants immediately after each union. Everything is sequential.
      */
     private runNaiveIteration(): HaltReason | undefined {
-        const matches = collectMatches(this.runtime, this.rewrites);
-        this.emitSnapshot('read', { matches: matches.map(toMatchEvent) });
+        const matches = this.work.time('read', () => collectMatches(this.runtime, this.rewrites));
+        this.emitSnapshot('read', () => ({ matches: matches.map(toMatchEvent) }));
         if (matches.length === 0) return 'saturated';
 
         let changed = false;
@@ -206,33 +270,45 @@ export class TimelineEngine implements EGraphEngine {
             stopped = this.limitReached();
             if (stopped) break;
 
-            const result = applyRewrite(
+            const result = this.work.time('write', () => applyRewrite(
                 this.runtime, match.rule.name, match.rule.rhs, match.eclassId,
                 match.substitution, 'naive', this.rng
-            );
+            ));
             if (!result.changed) continue;
             changed = true;
 
-            this.emitSnapshot('write', {
+            this.emitSnapshot('write', () => ({
                 matches: [toMatchEvent(match)],
-                applied: {
+                applied: [{
                     rule: match.rule.name,
                     targetClass: result.target,
                     createdId: result.createdId,
                     newNodes: result.newNodes,
-                    lhsNodes: match.nodes
-                }
-            });
-            this.runRebuild();
+                    lhsNodes: match.nodes,
+                    worker: 0
+                }]
+            }));
+            this.runRebuild(false);
         }
 
         if (!changed) return stopped ?? 'saturated';
         return stopped;
     }
 
-    private runRebuild() {
-        for (const step of rebuildGen(this.runtime)) {
-            this.emitSnapshot(step.phase, rebuildExtras(step));
+    private runRebuild(compact: boolean) {
+        const steps = rebuildGen(this.runtime, { compact });
+        for (;;) {
+            const t0 = this.work.clock();
+            const next = steps.next();
+            const ms = this.work.since(t0);
+            if (next.done) {
+                // Skipping stale worklist entries after the last repair finishes it off
+                this.work.amend('repair', ms);
+                break;
+            }
+            this.work.sequential(next.value.phase as WorkKind, ms);
+            const step = next.value;
+            this.emitSnapshot(step.phase, () => rebuildExtras(step));
         }
         if (this.options.debugInvariants) {
             assertInvariants(this.runtime, `after rebuild, iteration ${this.iteration}`);
@@ -243,7 +319,7 @@ export class TimelineEngine implements EGraphEngine {
         const maxNodes = this.options.maxNodes ?? DEFAULT_LIMITS.maxNodes;
         const maxSteps = this.options.maxSteps ?? DEFAULT_LIMITS.maxSteps;
         if (this.runtime.nextId >= maxNodes) return 'node-limit';
-        if (this.timeline.states.length >= maxSteps) return 'step-limit';
+        if (this.stepCount >= maxSteps) return 'step-limit';
         return undefined;
     }
 
@@ -340,7 +416,20 @@ export class TimelineEngine implements EGraphEngine {
         return entries;
     }
 
-    private emitSnapshot(phase: Phase, extras: SnapshotExtras = {}) {
+    /**
+     * Close the current step: its work goes to the work log and (unless the
+     * engine only benchmarks) a snapshot is recorded. `extras` is lazy so
+     * benchmarking skips building snapshot metadata.
+     */
+    private emitSnapshot(phase: Phase, extras: () => SnapshotExtras = () => ({})) {
+        this.work.flush();
+        this.stepCount++;
+        this.phases.push(phase);
+        if (!this.snapshots) {
+            this.runtime.diffs = [];
+            return;
+        }
+
         const prev = this.timeline.states[this.timeline.states.length - 1];
         const stepIndex = prev ? prev.stepIndex + 1 : 0;
 
@@ -358,7 +447,7 @@ export class TimelineEngine implements EGraphEngine {
                 hashconsValid: this.runtime.worklist.size === 0
             },
             selectionHints: [],
-            ...extras
+            ...extras()
         };
         this.runtime.diffs = [];
 

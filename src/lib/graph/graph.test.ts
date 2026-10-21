@@ -2,7 +2,7 @@ import { describe, it, expect, beforeAll, afterEach, vi } from 'vitest';
 import ELK from 'elkjs/lib/elk.bundled.js';
 import { LayoutManager, buildElkGraph, structureKey, multiClassSets, edgeTargetClass } from '../engine/layout';
 import { DEFAULT_LAYOUT_CONFIG } from '../engine/layoutConfig';
-import { buildFrame, routeEdge, type Frame } from './frame';
+import { buildFrame, routeEdge, READ_TIMING, type Frame } from './frame';
 import { fitViewport, zoomAt, needsRefit, visibleWorldRect, lerpViewport, MIN_ZOOM } from './viewport';
 import { containsPoint, nodeWidth, NODE_HEIGHT } from './geometry';
 import { PRESETS } from '../presets';
@@ -254,11 +254,15 @@ describe('buildFrame', () => {
         }
     });
 
-    it('fades new e-nodes in and moves existing ones', () => {
+    it('fades new e-nodes in once the workers writing them arrive, and moves existing ones', () => {
         const w = timeline.states.findIndex(s => s.phase === 'write');
-        const created = timeline.states[w].metadata.applied!.newNodes;
-        const f = buildFrame(src(w - 1), src(w), 0.5);
-        for (const id of created) expect(f.nodes.find(n => n.id === id)!.opacity).toBeCloseTo(0.5);
+        const created = timeline.states[w].metadata.applied!.flatMap(a => a.newNodes);
+        expect(created.length).toBeGreaterThan(0);
+        const { travelEnd } = READ_TIMING;
+        const arriving = buildFrame(src(w - 1), src(w), travelEnd);
+        for (const id of created) expect(arriving.nodes.find(n => n.id === id)!.opacity).toBe(0);
+        const f = buildFrame(src(w - 1), src(w), 0.7);
+        for (const id of created) expect(f.nodes.find(n => n.id === id)!.opacity).toBeCloseTo((0.7 - travelEnd) / (1 - travelEnd));
         const old = timeline.states[w - 1].eclasses[0].nodes[0].id;
         expect(f.nodes.find(n => n.id === old)!.opacity).toBe(1);
     });
@@ -306,6 +310,153 @@ describe('buildFrame', () => {
                     check(buildFrame({ state: tl.states[i], layout: ls[i] }, { state: tl.states[i + 1], layout: ls[i + 1] }, 0.37));
                 }
             }
+        }
+    });
+});
+
+describe('parallel matcher animation', () => {
+    const pm = PRESETS.find(p => p.id === 'parallel-matching')!;
+    let timeline: EGraphTimeline;
+    let layouts: LayoutData[];
+    const src = (i: number) => ({ state: timeline.states[i], layout: layouts[i] });
+    const sorted = (ids: number[]) => [...ids].sort((a, b) => a - b);
+    /** Indices of the first iteration's read batches. */
+    const reads = () => timeline.states.flatMap((s, i) => (s.phase === 'read-batch' && s.metadata.iteration === 0 ? [i] : []));
+
+    beforeAll(async () => {
+        timeline = run(pm, { implementation: 'deferred', parallelism: 4 }).timeline;
+        layouts = await layoutAll(timeline);
+    });
+
+    it('puts one worker on every e-class of a batch', () => {
+        for (const i of reads()) {
+            const f = buildFrame(src(i), null, 0);
+            const b = timeline.states[i].metadata.batch!;
+            expect(f.workers.map(w => w.classId)).toEqual(b.classIds);
+            for (const w of f.workers) {
+                const r = layouts[i].classes.get(w.classId)!;
+                expect(w.y).toBe(r.y); // badge straddles the top edge
+                expect(w.x).toBeGreaterThan(r.x);
+                expect(w.x).toBeLessThan(r.x + r.width);
+                expect(w.scan).toBeNull();
+                expect(w.opacity).toBe(1);
+            }
+            const searching = f.classes.filter(c => c.style === EClassStyleClass.Searching).map(c => c.id);
+            expect(sorted(searching)).toEqual(sorted(b.classIds));
+            const checked = f.classes.filter(c => c.searched === 1).map(c => c.id);
+            expect(sorted(checked)).toEqual(sorted(b.order.slice(0, b.index * b.size)));
+            expect(f.tags.map(t => t.rule)).toEqual(timeline.states[i].metadata.matches.map(m => m.rule));
+        }
+    });
+
+    it('moves the workers together, then scans every e-class at once', () => {
+        const [first, second] = reads();
+        const hop = buildFrame(src(first), src(second), READ_TIMING.travelEnd / 2);
+        const from = timeline.states[first].metadata.batch!.classIds;
+        const to = timeline.states[second].metadata.batch!.classIds;
+        expect(hop.workers.length).toBe(to.length);
+        hop.workers.forEach((w, k) => {
+            const a = layouts[first].classes.get(from[k])!;
+            const b = layouts[second].classes.get(to[k])!;
+            expect(w.x).toBeGreaterThanOrEqual(Math.min(a.x, b.x));
+            expect(w.x).toBeLessThanOrEqual(Math.max(a.x + a.width, b.x + b.width));
+            expect(w.y).toBeLessThan(Math.max(a.y, b.y)); // hops in an arc
+            expect(w.scan!.opacity).toBe(0); // not scanning while moving
+        });
+
+        const scanning = buildFrame(src(first), src(second), 0.6);
+        const progress = scanning.workers.map(w => w.scan!.progress);
+        expect(new Set(progress).size).toBe(1); // in lock-step
+        expect(progress[0]).toBeGreaterThan(0);
+        expect(progress[0]).toBeLessThan(1);
+        scanning.workers.forEach((w, k) => expect(w.scan!.rect).toEqual(layouts[second].classes.get(to[k])));
+    });
+
+    it('lights up a match (and tags it) when the beam reaches its root', () => {
+        const i = reads().slice(1).find(i => timeline.states[i].metadata.matches.length > 0)!;
+        const m = timeline.states[i].metadata.matches[0];
+        const root = m.nodes[0];
+        const cls = layouts[i].classes.get(m.eclassId)!;
+        const node = layouts[i].nodes.get(root)!;
+        const fy = (node.y + node.height / 2 - cls.y) / cls.height;
+        const found = READ_TIMING.scanStart + fy * (READ_TIMING.scanEnd - READ_TIMING.scanStart);
+
+        const fill = (f: Frame) => f.nodes.find(n => n.id === root)!.fill;
+        const before = buildFrame(src(i - 1), src(i), found - 0.02);
+        const after = buildFrame(src(i - 1), src(i), Math.min(0.99, found + 0.12));
+        expect(fill(before)).toBe(fill(buildFrame(src(i - 1), null, 0)));
+        expect(fill(after)).toBe(fill(buildFrame(src(i), null, 0)));
+        expect(before.tags.some(t => t.key === `${i}:0`)).toBe(false);
+        expect(after.tags.find(t => t.key === `${i}:0`)!.opacity).toBe(1);
+    });
+
+    it('brings workers in at the first batch and out after the last', () => {
+        const rs = reads();
+        const first = rs[0];
+        const appear = buildFrame(src(first - 1), src(first), 0.1);
+        expect(appear.workers.length).toBe(4);
+        appear.workers.forEach(w => expect(w.opacity).toBeGreaterThan(0));
+        appear.workers.forEach(w => expect(w.opacity).toBeLessThan(1));
+
+        // After the last batch the workers move on to writing...
+        const last = rs[rs.length - 1];
+        expect(timeline.states[last + 1].phase).toBe('write');
+        const toWrite = buildFrame(src(last), src(last + 1), READ_TIMING.travelEnd);
+        expect(toWrite.workers.length).toBeGreaterThan(0);
+        toWrite.workers.forEach(w => expect(w.opacity).toBe(1));
+        toWrite.workers.forEach(w => expect(w.writing).toBe(1));
+        toWrite.workers.forEach(w => expect(w.scan).toBeNull());
+        toWrite.tags.forEach(t => expect(t.opacity).toBe(0)); // lifted off into the writelist
+        toWrite.classes.forEach(c => expect(c.searched).toBe(0));
+
+        // ...and leave when the rebuild (sequential) starts
+        let w = last + 1;
+        while (timeline.states[w + 1].phase === 'write') w++;
+        const leave = buildFrame(src(w), src(w + 1), READ_TIMING.travelEnd);
+        leave.workers.forEach(x => expect(x.opacity).toBe(0));
+        expect(buildFrame(src(w + 1), null, 0).workers).toEqual([]);
+    });
+
+    it('puts one write worker on the e-class each writelist entry targets', () => {
+        for (const [i, s] of timeline.states.entries()) {
+            if (s.phase !== 'write') continue;
+            const wl = s.metadata.writelist!;
+            const f = buildFrame(src(i), null, 0);
+            expect(f.workers.length).toBe(wl.nextIndex - wl.batchStart!);
+            expect(f.workers.length).toBeLessThanOrEqual(4);
+            for (const a of s.metadata.applied!) expect(f.workers[a.worker].classId).toBe(a.targetClass);
+            f.workers.forEach(x => expect(x.writing).toBe(1));
+        }
+    });
+
+    it('stays well-formed through every read transition (any worker count)', async () => {
+        for (const parallelism of [1, 3, 32]) {
+            const tl = run(pm, { implementation: 'deferred', parallelism }).timeline;
+            const ls = await layoutAll(tl);
+            for (let i = 0; i + 1 < tl.states.length; i++) {
+                for (const t of [0.2, 0.5, 0.8]) {
+                    const f = buildFrame({ state: tl.states[i], layout: ls[i] }, { state: tl.states[i + 1], layout: ls[i + 1] }, t);
+                    expect(JSON.stringify(f).match(/NaN|Infinity/)).toBeNull();
+                    expect(f.workers.length).toBeLessThanOrEqual(parallelism);
+                    for (const w of f.workers) {
+                        expect(w.opacity).toBeGreaterThanOrEqual(0);
+                        expect(w.opacity).toBeLessThanOrEqual(1);
+                        if (w.scan) expect(w.scan.progress).toBeLessThanOrEqual(1);
+                    }
+                    for (const tag of f.tags) expect(tag.opacity).toBeGreaterThan(-1e-9);
+                }
+            }
+        }
+    });
+
+    it('draws nothing extra outside the parallel phases', () => {
+        for (let i = 0; i < timeline.states.length; i++) {
+            const phase = timeline.states[i].phase;
+            if (phase === 'read-batch') continue;
+            const f = buildFrame(src(i), null, 0);
+            if (phase !== 'write') expect(f.workers).toEqual([]);
+            expect(f.tags).toEqual([]);
+            expect(f.classes.every(c => c.searched === 0 && c.style !== EClassStyleClass.Searching)).toBe(true);
         }
     });
 });

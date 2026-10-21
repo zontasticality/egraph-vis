@@ -10,12 +10,17 @@
         scrubTo,
         timelinePosition,
         currentIndex,
+        displayIndex,
+        displayState,
         timeline,
-        currentState,
         playbackSpeed,
         setSpeed,
         layoutVersion,
+        timeScaleMode,
+        executionSpans,
     } from "../stores/timelineStore";
+    import { executionTiming } from "../stores/benchmarkStore";
+    import { stageTotals } from "../engine/benchmark";
     import { layoutManager } from "../engine/layout";
     import {
         describeStep,
@@ -23,7 +28,9 @@
         PHASE_DESCRIPTIONS,
     } from "../engine/describe";
     import { PHASE_COLORS } from "../engine/visualStyles";
-    import type { EGraphState } from "../engine/types";
+    import TimelineTrack from "./TimelineTrack.svelte";
+    import ExecutionTimePanel from "./ExecutionTimePanel.svelte";
+    import { buildTimeScale, formatDuration } from "./timelineTrack";
 
     $: current = $currentIndex;
     $: total = $timeline ? $timeline.states.length : 0;
@@ -38,43 +45,57 @@
         { label: "8×", ms: 110 },
     ];
 
-    function handleSliderInput(event: Event) {
-        scrubTo(parseFloat((event.target as HTMLInputElement).value));
-    }
-
     // Snap to the nearest step when released close to one
-    function handleSliderChange(event: Event) {
-        const value = parseFloat((event.target as HTMLInputElement).value);
+    function handleSliderChange(value: number) {
         const snapped = Math.round(value);
         if (Math.abs(value - snapped) < 0.12) goToStep(snapped, true);
     }
 
-    $: description = $currentState ? describeStep($currentState) : "";
-    $: phase = $currentState?.phase;
-    $: iteration = $currentState?.metadata.iteration ?? 0;
+    // Text describes the step being animated (see displayIndex)
+    $: description = $displayState ? describeStep($displayState) : "";
+    $: phase = $displayState?.phase;
+    $: iteration = $displayState?.metadata.iteration ?? 0;
 
-    // Track gradient: one colored segment per run of equal phases
-    function trackGradient(states: EGraphState[]): string {
-        const n = states.length;
-        if (n <= 1) {
-            const c = n === 1 ? PHASE_COLORS[states[0].phase] : "#e5e7eb";
-            return `linear-gradient(to right, ${c} 0%, ${c} 100%)`;
-        }
-        const stops: string[] = [];
-        let runStart = 0;
-        for (let i = 1; i <= n - 1; i++) {
-            if (i === n - 1 || states[i].phase !== states[runStart].phase) {
-                const color = PHASE_COLORS[states[runStart].phase];
-                const a = (runStart / (n - 1)) * 100;
-                const b = (i / (n - 1)) * 100;
-                stops.push(`${color} ${a}%`, `${color} ${b}%`);
-                runStart = i;
-            }
-        }
-        return `linear-gradient(to right, ${stops.join(", ")})`;
+    // ─── Execution time ──────────────────────────────────────────────────
+    $: timeMode = $timeScaleMode === "time";
+    $: measured = $executionTiming?.current.result ?? null;
+    $: trackTiming = measured ? { steps: measured.steps, implementation: measured.implementation } : null;
+    $: execScale = $executionSpans && $timeline ? buildTimeScale($timeline.states.length, $executionSpans, 1) : null;
+    $: elapsed = execScale ? execScale.timeAt($timelinePosition) : 0;
+    $: measuring = timeMode && (!$executionTiming || $executionTiming.current.status === "running");
+    $: measureError = $executionTiming?.current.status === "error" ? $executionTiming.current.error : null;
+
+    /** How the timeline shown compares with naive (or, when naive, with the deferred workers). */
+    $: verdict = (() => {
+        const t = $executionTiming;
+        if (!t) return null;
+        const totals = t.compare.map((c) => (c.result ? stageTotals(c.result).total : null));
+        const naive = totals[0];
+        const otherIndex = t.currentIndex === 0 ? t.compare.length - 1 : 0;
+        const mine = totals[t.currentIndex];
+        const other = totals[otherIndex];
+        if (mine === null || other === null || naive === null || otherIndex === t.currentIndex) return null;
+        const ratio = t.currentIndex === 0 ? naive / other : naive / mine;
+        const text = `${ratio.toFixed(ratio >= 10 ? 0 : 1)}× ${ratio >= 1 ? "faster" : "slower"}`;
+        return t.currentIndex === 0 ? `${t.compare[otherIndex].label} is ${text}` : `${text} than naive`;
+    })();
+
+    let showComparison = false;
+    let comparisonEl: HTMLElement | undefined;
+    let chipEl: HTMLElement | undefined;
+    $: if (!timeMode) showComparison = false;
+
+    function handleWindowClick(e: MouseEvent) {
+        if (!showComparison) return;
+        const t = e.target as Node;
+        if (comparisonEl?.contains(t) || chipEl?.contains(t)) return;
+        showComparison = false;
     }
 
-    $: gradient = trackGradient($timeline?.states ?? []);
+    function setScale(mode: "steps" | "time") {
+        timeScaleMode.set(mode);
+    }
+
     const readLayoutProgress = (_v: number, _t: unknown) => layoutManager.progress();
     $: layoutProgress = readLayoutProgress($layoutVersion, $timeline);
 
@@ -107,6 +128,10 @@
             case "End":
                 goToStep(max, true);
                 break;
+            case "t":
+            case "T":
+                setScale($timeScaleMode === "time" ? "steps" : "time");
+                break;
             default:
                 return;
         }
@@ -114,7 +139,7 @@
     }
 </script>
 
-<svelte:window on:keydown={handleKeydown} />
+<svelte:window on:keydown={handleKeydown} on:click={handleWindowClick} />
 
 <div class="controller">
     <div class="controls-left">
@@ -170,25 +195,46 @@
     </div>
 
     <div class="timeline-col">
-        <div class="description" aria-live="polite">
-            {#if $currentState}
+        <div class="description">
+            {#if $displayState}
                 <span class="iteration" title="Equality saturation iteration">it. {iteration}</span>
-                <span class="text" title={description}>{description}</span>
+                <span class="text" title={description} aria-live="polite">{description}</span>
+            {/if}
+            {#if timeMode}
+                <span class="exec">
+                    {#if measureError}
+                        <span class="exec-status error" title={measureError}>could not measure</span>
+                    {:else if measuring || !execScale}
+                        <span class="exec-status">measuring…</span>
+                    {:else}
+                        <span class="exec-clock" title="Execution time at the playhead / total (measured)">
+                            {formatDuration(elapsed)} <span class="of">/ {formatDuration(execScale.total)}</span>
+                        </span>
+                        <button
+                            class="exec-chip"
+                            class:open={showComparison}
+                            bind:this={chipEl}
+                            on:click={() => (showComparison = !showComparison)}
+                            title="Compare the stages with naive and deferred mode"
+                            aria-expanded={showComparison}
+                        >
+                            {verdict ?? "Compare"}
+                            <svg viewBox="0 0 10 10" width="8" height="8" aria-hidden="true"><path d="M2 6.5 L5 3.5 L8 6.5" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round" /></svg>
+                        </button>
+                    {/if}
+                </span>
             {/if}
         </div>
         <div class="slider-row">
-            <span class="step-count" title="Step / last step">{current} / {max}</span>
-            <input
-                type="range"
-                min="0"
-                {max}
-                step="0.01"
-                value={$timelinePosition}
-                on:input={handleSliderInput}
-                on:change={handleSliderChange}
+            <span class="step-count" title="Step being shown / last step">{$displayIndex} / {max}</span>
+            <TimelineTrack
+                states={$timeline?.states ?? []}
+                position={$timelinePosition}
                 disabled={total === 0}
-                aria-label="Timeline position"
-                style="--track-gradient: {gradient}"
+                timing={trackTiming}
+                mode={$timeScaleMode}
+                on:input={(e) => scrubTo(e.detail)}
+                on:change={(e) => handleSliderChange(e.detail)}
             />
         </div>
     </div>
@@ -199,6 +245,26 @@
                 layout {layoutProgress.done}/{layoutProgress.total}
             </span>
         {/if}
+        <div class="scale-toggle" role="radiogroup" aria-label="Scrub bar scale">
+            <button
+                role="radio"
+                aria-checked={!timeMode}
+                class:active={!timeMode}
+                on:click={() => setScale("steps")}
+                title="One slot per step (T)"
+            >Steps</button>
+            <button
+                role="radio"
+                aria-checked={timeMode}
+                class:active={timeMode}
+                class:busy={measuring}
+                on:click={() => setScale("time")}
+                title="Each step as long as it takes to execute, measured in your browser; playback runs in scaled real time (T)"
+            >
+                <svg viewBox="0 0 16 16" width="11" height="11" aria-hidden="true"><circle cx="8" cy="8" r="6.2" fill="none" stroke="currentColor" stroke-width="1.6" /><path d="M8 4.6 V8 L10.4 9.6" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" /></svg>
+                Time
+            </button>
+        </div>
         <select
             class="speed"
             value={$playbackSpeed}
@@ -220,10 +286,17 @@
             </span>
         {/if}
     </div>
+
+    {#if showComparison && $executionTiming}
+        <div class="exec-popover" bind:this={comparisonEl}>
+            <ExecutionTimePanel timing={$executionTiming} on:close={() => (showComparison = false)} />
+        </div>
+    {/if}
 </div>
 
 <style>
     .controller {
+        position: relative;
         display: flex;
         align-items: center;
         gap: 1rem;
@@ -297,6 +370,114 @@
         overflow: hidden;
         text-overflow: ellipsis;
         white-space: nowrap;
+        flex: 1;
+        min-width: 0;
+    }
+
+    .exec {
+        flex-shrink: 0;
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        margin-left: auto;
+        font-size: 0.72rem;
+        font-variant-numeric: tabular-nums;
+    }
+
+    .exec-clock {
+        font-weight: 600;
+        color: #0f172a;
+    }
+
+    .exec-clock .of {
+        font-weight: 500;
+        color: #64748b;
+    }
+
+    .exec-status {
+        color: #94a3b8;
+        font-style: italic;
+    }
+
+    .exec-status.error {
+        color: #b91c1c;
+        font-style: normal;
+    }
+
+    .exec-chip {
+        display: inline-flex;
+        align-items: center;
+        gap: 5px;
+        padding: 1px 8px;
+        border-radius: 999px;
+        border: 1px solid #bfdbfe;
+        background: #eff6ff;
+        color: #1d4ed8;
+        font: inherit;
+        font-weight: 600;
+        cursor: pointer;
+    }
+
+    .exec-chip:hover,
+    .exec-chip.open {
+        background: #dbeafe;
+        border-color: #93c5fd;
+    }
+
+    .exec-chip.open svg {
+        transform: rotate(180deg);
+    }
+
+    .exec-popover {
+        position: absolute;
+        right: 1.25rem;
+        bottom: calc(100% + 8px);
+        z-index: 40;
+    }
+
+    .scale-toggle {
+        display: flex;
+        border: 1px solid #d1d5db;
+        border-radius: 6px;
+        overflow: hidden;
+    }
+
+    .scale-toggle button {
+        display: inline-flex;
+        align-items: center;
+        gap: 4px;
+        padding: 4px 8px;
+        border: none;
+        background: white;
+        color: #4b5563;
+        font-size: 0.75rem;
+        font-weight: 500;
+        cursor: pointer;
+    }
+
+    .scale-toggle button + button {
+        border-left: 1px solid #d1d5db;
+    }
+
+    .scale-toggle button:hover:not(.active) {
+        background: #f9fafb;
+        color: #111827;
+    }
+
+    .scale-toggle button.active {
+        background: #eff6ff;
+        color: #1d4ed8;
+        font-weight: 600;
+    }
+
+    .scale-toggle button.busy svg {
+        animation: spin 1.2s linear infinite;
+    }
+
+    @keyframes spin {
+        to {
+            transform: rotate(360deg);
+        }
     }
 
     .iteration {
@@ -323,56 +504,6 @@
         min-width: 66px;
         text-align: right;
         font-variant-numeric: tabular-nums;
-    }
-
-    input[type="range"] {
-        flex: 1;
-        min-width: 0;
-        cursor: pointer;
-        -webkit-appearance: none;
-        appearance: none;
-        background: transparent;
-        height: 22px;
-    }
-
-    input[type="range"]::-webkit-slider-runnable-track {
-        height: 8px;
-        background: var(--track-gradient);
-        border-radius: 4px;
-    }
-
-    input[type="range"]::-moz-range-track {
-        height: 8px;
-        background: var(--track-gradient);
-        border-radius: 4px;
-    }
-
-    input[type="range"]::-webkit-slider-thumb {
-        height: 18px;
-        width: 18px;
-        border-radius: 50%;
-        background: #ffffff;
-        border: 2px solid #1d4ed8;
-        -webkit-appearance: none;
-        margin-top: -5px;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    }
-
-    input[type="range"]::-moz-range-thumb {
-        height: 16px;
-        width: 16px;
-        border: 2px solid #1d4ed8;
-        border-radius: 50%;
-        background: #ffffff;
-        box-shadow: 0 1px 3px rgba(0, 0, 0, 0.2);
-    }
-
-    input[type="range"]:focus {
-        outline: none;
-    }
-
-    input[type="range"]:focus-visible::-webkit-slider-thumb {
-        box-shadow: 0 0 0 4px rgba(59, 130, 246, 0.25);
     }
 
     .info {

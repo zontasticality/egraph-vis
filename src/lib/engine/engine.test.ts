@@ -448,10 +448,12 @@ describe('TimelineEngine', () => {
             // The key invariant: parallelism should REDUCE the number of read-batch snapshots
             expect(readBatchCount5).toBeLessThan(readBatchCount1);
 
-            // Both should have the same total number of write snapshots (4 matches in iteration 0: a,b,d,e → c)
-            // Note: There may be more writes in subsequent iterations
+            // Both apply the same rewrites (4 matches in iteration 0: a,b,d,e → c), but five
+            // workers apply them in parallel: one write step instead of one per rewrite
+            const applied = (tl: typeof timeline1) => tl.states.flatMap(s => s.metadata.applied ?? []).map(a => `${a.rule}@${a.targetClass}`);
             expect(allWriteCount1).toBeGreaterThanOrEqual(4);
-            expect(allWriteCount5).toBeGreaterThanOrEqual(4);
+            expect(applied(timeline5)).toEqual(applied(timeline1));
+            expect(allWriteCount5).toBeLessThan(allWriteCount1);
         });
 
         it('should understand rebuild phase timesteps', async () => {

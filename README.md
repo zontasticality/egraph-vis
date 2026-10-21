@@ -2,8 +2,10 @@
 
 An interactive visualization of **e-graphs** and **equality saturation**, based on the paper ["egg: Fast and Extensible Equality Saturation"](https://egraphs-good.github.io/). This project demonstrates how the equality saturation algorithm works step-by-step using an interactive web interface.
 
-- **Two engines**: *naive* (restore invariants after every union) and *deferred* (egg's rebuilding: read every match into a writelist, apply them all, then compact and repair once). The deferred read phase can be batched to simulate parallel search.
-- **Every step is a snapshot**: init → read → write → compact → repair → … → done. Scrub, step, jump by phase, or play with smooth animations between snapshots.
+- **Two engines**: *naive* (restore invariants after every union) and *deferred* (egg's rebuilding: read every match into a writelist, apply them all, then compact and repair once).
+- **Parallel workers**: in deferred mode ×1–×32 workers run the read and write phases in lock-step rounds. Reading, each worker scans one e-class per step; matches light up and are queued in the writelist. Writing, each worker applies one writelist entry per step. Try the *Parallel Matching* preset.
+- **Real execution time**: switch the scrub bar from *Steps* to *Time* (or press `T`). The engine is benchmarked in a web worker (hundreds of snapshot-free runs, every task timed), each step becomes as wide as it takes, parallel steps show one lane per worker, and playback runs in scaled real time. The comparison panel puts naive, deferred ×1 and deferred ×N side by side, stage by stage.
+- **Every step is a snapshot**: init → read → write → compact → repair → … → done. Scrub, step, jump by phase, or play with smooth animations between snapshots. The scrub bar has one segment per animation, colored by the phase it animates, with ticks at phase changes and iteration starts.
 - **Faithful rebuilding**: unions leave stale e-node children and hashcons keys behind; repair re-canonicalizes parents, merges congruent ones and removes duplicate e-nodes, exactly as in egg.
 - **Linked views**: the graph, e-class table, hashcons, union-find, worklist and writelist highlight the same e-classes on hover and selection.
 - **Editable presets**: edit the initial term and rewrite rules live, save your own presets (stored in `localStorage`), import/export them as JSON.
@@ -26,7 +28,8 @@ npm run build      # static build for GitHub Pages
 | --- | --- |
 | `src/lib/engine/runtime.ts` | E-graph data structure: union-find, e-classes, hashcons, worklist, `merge`, `repairClass` |
 | `src/lib/engine/algorithms.ts` | E-matching, applying rewrites, the compaction + repair rebuild loop |
-| `src/lib/engine/timeline.ts` | Runs equality saturation and records structurally shared snapshots |
+| `src/lib/engine/timeline.ts` | Runs equality saturation and records structurally shared snapshots (and the work behind each one) |
+| `src/lib/engine/work.ts`, `benchmark.ts` | Timing every task, and averaging snapshot-free runs into per-step execution times |
 | `src/lib/engine/invariants.ts` | Checks the congruence/hashcons invariants (used by tests and `debugInvariants`) |
 | `src/lib/engine/layout.ts` | ELK layouts (in a web worker), cached per distinct graph structure |
 | `src/lib/graph/frame.ts` | Pure frame builder: interpolates two snapshots into positioned shapes and edge paths |

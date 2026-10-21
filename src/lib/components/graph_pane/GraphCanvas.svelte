@@ -24,12 +24,13 @@
         type Viewport,
     } from "../../graph/viewport";
     import { portOffset, unionRects } from "../../graph/geometry";
-    import { getColorForId } from "../../utils/colors";
+    import { getColorForId, mixColor } from "../../utils/colors";
     import {
         EDGE_COLORS,
         SET_STYLE,
         NODE_STYLES,
         ECLASS_STYLES,
+        WORKER_STYLE,
     } from "../../engine/visualStyles";
     import { NodeStyleClass, EClassStyleClass } from "../../engine/types";
     import type { EGraphTimeline, Rect } from "../../engine/types";
@@ -349,6 +350,23 @@
                         <path d="M 0 1 L 9 5 L 0 9 z" fill={color} />
                     </marker>
                 {/each}
+                <linearGradient id="scan-trail" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0" stop-color={WORKER_STYLE.beam} stop-opacity="0" />
+                    <stop offset="1" stop-color={WORKER_STYLE.beam} stop-opacity="0.45" />
+                </linearGradient>
+                {#each frame.workers as w (w.id)}
+                    {#if w.scan}
+                        <clipPath id="scan-clip-{w.id}">
+                            <rect
+                                x={w.scan.rect.x}
+                                y={w.scan.rect.y}
+                                width={w.scan.rect.width}
+                                height={w.scan.rect.height}
+                                rx="10"
+                            />
+                        </clipPath>
+                    {/if}
+                {/each}
             </defs>
 
             <g
@@ -434,7 +452,35 @@
                                 <title>In the worklist</title>
                             </circle>
                         {/if}
+                        {#if detailed && c.searched > 0.01}
+                            {@const cx = c.rect.x + 6 + labelWidth(label) + 4}
+                            <path
+                                class="searched-check"
+                                d="M {cx} {c.rect.y + 12} l 2.6 2.8 l 5.2 -6"
+                                stroke={WORKER_STYLE.check}
+                                opacity={c.searched}
+                            >
+                                <title>Already searched in this read phase</title>
+                            </path>
+                        {/if}
                     </g>
+                {/each}
+
+                <!-- Scanned area: every worker of a batch searches its e-class at the same time -->
+                {#each frame.workers as w (w.id)}
+                    {#if w.scan && w.scan.opacity > 0}
+                        {@const r = w.scan.rect}
+                        <rect
+                            class="scan"
+                            x={r.x}
+                            y={r.y}
+                            width={r.width}
+                            height={r.height * w.scan.progress}
+                            fill="url(#scan-trail)"
+                            opacity={w.scan.opacity}
+                            clip-path="url(#scan-clip-{w.id})"
+                        />
+                    {/if}
                 {/each}
 
                 <!-- Edges: argument port → e-class -->
@@ -497,6 +543,73 @@
                         {/if}
                     </g>
                 {/each}
+
+                <!-- Scan beams (drawn over the e-nodes they pass) -->
+                {#each frame.workers as w (w.id)}
+                    {#if w.scan && w.scan.opacity > 0}
+                        {@const r = w.scan.rect}
+                        {@const beamY = r.y + r.height * w.scan.progress}
+                        <line
+                            class="beam"
+                            x1={r.x + 3}
+                            x2={r.x + r.width - 3}
+                            y1={beamY}
+                            y2={beamY}
+                            stroke={WORKER_STYLE.fill}
+                            opacity={w.scan.opacity * 0.9}
+                            clip-path="url(#scan-clip-{w.id})"
+                        />
+                    {/if}
+                {/each}
+
+                <!-- Parallel workers (deferred read and write phases) -->
+                {#each frame.workers as w (w.id)}
+                    {@const fill = mixColor(WORKER_STYLE.fill, WORKER_STYLE.writeFill, w.writing)}
+                    <g
+                        class="worker"
+                        transform="translate({w.x} {w.y}) scale({w.scale})"
+                        opacity={w.opacity}
+                    >
+                        {#if detailed}
+                            <rect x="-19" y="-9" width="38" height="18" rx="9" {fill} stroke="white" stroke-width="1.5" />
+                            {#if w.writing < 0.5}
+                                <circle cx="-8" cy="-1.3" r="3.6" fill="none" stroke="white" stroke-width="1.7" />
+                                <line x1="-5.4" y1="1.4" x2="-2.7" y2="4.2" stroke="white" stroke-width="1.9" stroke-linecap="round" />
+                            {:else}
+                                <!-- pen -->
+                                <path d="M -11.5 4.5 l 1 -3.6 l 6 -6 l 2.6 2.6 l -6 6 z" fill="white" />
+                                <line x1="-11.5" y1="5.6" x2="-4" y2="5.6" stroke="white" stroke-width="1.2" stroke-linecap="round" />
+                            {/if}
+                            <text class="worker-label" x="6.5" y="0.5">{w.id + 1}</text>
+                        {:else}
+                            <circle r="12" {fill} stroke="white" stroke-width="3" />
+                        {/if}
+                        <title>Worker {w.id + 1}: {w.writing < 0.5 ? "searching" : "applying a rewrite to"} e-class {w.classId}</title>
+                    </g>
+                {/each}
+
+                <!-- Matches found by the current batch (lift off into the writelist) -->
+                {#if detailed}
+                    {#each frame.tags as tag (tag.key)}
+                        {@const tw = tag.rule.length * 5.7 + 18}
+                        <g
+                            class="match-tag"
+                            transform="translate({tag.x} {tag.y}) scale({tag.scale})"
+                            opacity={tag.opacity}
+                        >
+                            <rect
+                                x={-tw / 2}
+                                y="-15"
+                                width={tw}
+                                height="15"
+                                rx="7.5"
+                                fill={WORKER_STYLE.tagFill}
+                                stroke={WORKER_STYLE.tagStroke}
+                            />
+                            <text class="tag-label" y="-7.2" fill={WORKER_STYLE.tagText}>+ {tag.rule}</text>
+                        </g>
+                    {/each}
+                {/if}
             </g>
         </svg>
     {/if}
@@ -652,6 +765,50 @@
         pointer-events: none;
     }
 
+    .searched-check {
+        fill: none;
+        stroke-width: 1.8;
+        stroke-linecap: round;
+        stroke-linejoin: round;
+    }
+
+    .scan {
+        pointer-events: none;
+    }
+
+    .beam {
+        stroke-width: 2.5;
+        stroke-linecap: round;
+        pointer-events: none;
+        filter: drop-shadow(0 0 3px rgba(251, 191, 36, 0.9));
+    }
+
+    .worker {
+        cursor: help;
+    }
+
+    .worker rect {
+        filter: drop-shadow(0 1px 2px rgba(120, 53, 15, 0.35));
+    }
+
+    .worker-label {
+        font: 800 10.5px ui-sans-serif, system-ui, sans-serif;
+        fill: white;
+        text-anchor: middle;
+        dominant-baseline: central;
+        pointer-events: none;
+    }
+
+    .match-tag {
+        pointer-events: none;
+    }
+
+    .tag-label {
+        font: 600 9.5px ui-monospace, "SFMono-Regular", Menlo, monospace;
+        text-anchor: middle;
+        dominant-baseline: central;
+    }
+
     .match-glow {
         filter: drop-shadow(0 0 4px rgba(37, 99, 235, 0.65));
     }
@@ -700,6 +857,8 @@
         position: absolute;
         top: 10px;
         right: 10px;
+        max-height: calc(100% - 20px);
+        display: flex;
         z-index: 5;
     }
 

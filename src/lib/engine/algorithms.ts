@@ -16,7 +16,13 @@ export interface MatchBatchResult {
     batchId: number;
     totalBatches: number;
     classIds: ENodeId[];    // E-classes searched in this batch
+    /** Every e-class searched in this read phase, in search order (shared by all batches). */
+    order: ENodeId[];
+    /** Batch size: number of parallel workers. */
+    size: number;
     matchingNodeIds: number[];  // Nodes involved in matches (for highlighting)
+    /** Time (ms) worker i spent searching `classIds[i]` for every rule (only with a timer). */
+    taskTimes: number[];
 }
 
 interface PartialMatch {
@@ -118,14 +124,16 @@ export function collectMatches(runtime: EGraphRuntime, rules: RewriteRule[]): Ma
 /**
  * Generator version that yields after each batch of e-classes.
  * In deferred mode with parallelism > 1, simulates parallel search by batching e-classes:
- * every batch checks ALL rules against `parallelism` e-classes.
+ * every batch checks ALL rules against `parallelism` e-classes, one worker per e-class.
+ * With a `timer`, each worker's search is timed.
  *
  * IMPORTANT: The read phase is PURE - it does not mutate the graph.
  */
 export function* collectMatchesGen(
     runtime: EGraphRuntime,
     rules: RewriteRule[],
-    parallelism: number = 1
+    parallelism: number = 1,
+    timer?: { clock: () => number; since: (t0: number) => number }
 ): Generator<MatchBatchResult> {
     const ids = Array.from(runtime.eclasses.keys());
     const enabledRules = rules.filter(r => r.enabled);
@@ -134,12 +142,22 @@ export function* collectMatchesGen(
 
     for (let batchId = 0; batchId < totalBatches; batchId++) {
         const classIds = ids.slice(batchId * size, (batchId + 1) * size);
+        const taskTimes: number[] = [];
+
+        // Each worker searches its e-class for every rule...
+        const found = classIds.map(id => {
+            const t0 = timer?.clock() ?? 0;
+            const perRule = enabledRules.map(rule => matchRuleInClass(runtime, rule, id));
+            if (timer) taskTimes.push(timer.since(t0));
+            return perRule;
+        });
+
+        // ...and the batch reports them rule-major (the writelist order)
         const batchMatches: Match[] = [];
         const batchNodeIds = new Set<number>();
-
-        for (const rule of enabledRules) {
-            for (const id of classIds) {
-                for (const match of matchRuleInClass(runtime, rule, id)) {
+        for (let r = 0; r < enabledRules.length; r++) {
+            for (const perRule of found) {
+                for (const match of perRule[r]) {
                     batchMatches.push(match);
                     match.nodes.forEach(n => batchNodeIds.add(n));
                 }
@@ -151,7 +169,10 @@ export function* collectMatchesGen(
             batchId,
             totalBatches,
             classIds,
-            matchingNodeIds: Array.from(batchNodeIds)
+            order: ids,
+            size,
+            matchingNodeIds: Array.from(batchNodeIds),
+            taskTimes
         };
     }
 }
@@ -254,7 +275,7 @@ export function applyMatches(
     impl: 'naive' | 'deferred'
 ) {
     for (const _ of applyMatchesGen(runtime, matches, impl)) {
-        if (impl === 'naive') rebuild(runtime);
+        if (impl === 'naive') rebuild(runtime, { compact: false });
     }
 }
 
@@ -266,14 +287,15 @@ export type RebuildStep =
 
 /**
  * Restore the e-graph invariants, yielding after each unit of work:
- *  1. Compaction (deferred mode only has work here): fold every merged,
- *     non-canonical e-class into its canonical representative.
+ *  1. Compaction (deferred mode only): fold every merged, non-canonical
+ *     e-class into its canonical representative. Naive unions merge e-classes
+ *     physically right away, so there is nothing to compact.
  *  2. Repair: pop the worklist one e-class at a time and run congruence
  *     closure on its parents until the worklist is empty.
  */
-export function* rebuildGen(runtime: EGraphRuntime): Generator<RebuildStep> {
+export function* rebuildGen(runtime: EGraphRuntime, { compact = true }: { compact?: boolean } = {}): Generator<RebuildStep> {
     // 1. Compaction pass (ascending ID order for deterministic playback)
-    const allIds = Array.from(runtime.eclasses.keys()).sort((a, b) => a - b);
+    const allIds = compact ? Array.from(runtime.eclasses.keys()).sort((a, b) => a - b) : [];
     for (const id of allIds) {
         const eclass = runtime.eclasses.get(id);
         if (!eclass) continue;
@@ -306,8 +328,8 @@ export function* rebuildGen(runtime: EGraphRuntime): Generator<RebuildStep> {
 }
 
 /** Run a full rebuild without yielding intermediate steps. */
-export function rebuild(runtime: EGraphRuntime) {
-    for (const _ of rebuildGen(runtime)) {
+export function rebuild(runtime: EGraphRuntime, options?: { compact?: boolean }) {
+    for (const _ of rebuildGen(runtime, options)) {
         // drain
     }
 }

@@ -62,7 +62,25 @@ export const ECLASS_STYLES: Record<EClassStyleClass, EClassStyle> = {
     [EClassStyleClass.Merged]: {
         fill: '#fff7ed', stroke: '#fb923c', dashed: true, strokeWidth: 1.5, opacity: 0.9,
         label: 'Merged', description: 'Non-canonical; waiting to be compacted'
+    },
+    [EClassStyleClass.Searching]: {
+        fill: '#fffbeb', stroke: '#f59e0b', dashed: false, strokeWidth: 2.5, opacity: 1,
+        label: 'Searching', description: 'A worker is searching it for rule matches'
     }
+};
+
+/** Parallel workers (deferred read and write phases): badge and scan-beam colors. */
+export const WORKER_STYLE = {
+    fill: '#f59e0b',
+    /** Badge color while applying a rewrite (write phase). */
+    writeFill: '#f43f5e',
+    beam: '#fbbf24',
+    check: '#b45309',
+    tagFill: '#fef3c7',
+    tagStroke: '#d97706',
+    tagText: '#78350f',
+    label: 'Worker',
+    description: 'Searches one e-class (read) or applies one rewrite (write) per step; all workers run at the same time'
 };
 
 /** Union-find set container (deferred mode, between a union and compaction). */

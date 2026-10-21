@@ -4,6 +4,7 @@
         ECLASS_STYLES,
         SET_STYLE,
         EDGE_COLORS,
+        WORKER_STYLE,
     } from "../../engine/visualStyles";
     import { NodeStyleClass, EClassStyleClass } from "../../engine/types";
     import type { Implementation } from "../../engine/types";
@@ -106,6 +107,96 @@
                 </div>
             {/if}
 
+            {#if implementation === "deferred"}
+                {@const searching = ECLASS_STYLES[EClassStyleClass.Searching]}
+                <div class="group-title">Parallel workers</div>
+                <div class="row" title={WORKER_STYLE.description}>
+                    <svg width="26" height="16"
+                        ><rect x="1" y="2" width="24" height="12" rx="6" fill={WORKER_STYLE.fill} /><circle
+                            cx="8"
+                            cy="7.4"
+                            r="2.6"
+                            fill="none"
+                            stroke="white"
+                            stroke-width="1.4"
+                        /><line x1="9.9" y1="9.3" x2="11.8" y2="11.2" stroke="white" stroke-width="1.5" stroke-linecap="round" /><text
+                            x="18"
+                            y="8.5"
+                            fill="white"
+                            font-size="8"
+                            font-weight="800"
+                            text-anchor="middle"
+                            dominant-baseline="central">1</text
+                        ></svg
+                    >
+                    <span class="name">Worker · read</span>
+                    <span class="desc">Searches one e-class for every rule</span>
+                </div>
+                <div class="row" title={WORKER_STYLE.description}>
+                    <svg width="26" height="16"
+                        ><rect x="1" y="2" width="24" height="12" rx="6" fill={WORKER_STYLE.writeFill} /><path
+                            d="M 4.6 11.2 l 0.7 -2.6 l 4.4 -4.4 l 1.9 1.9 l -4.4 4.4 z"
+                            fill="white"
+                        /><text
+                            x="18"
+                            y="8.5"
+                            fill="white"
+                            font-size="8"
+                            font-weight="800"
+                            text-anchor="middle"
+                            dominant-baseline="central">1</text
+                        ></svg
+                    >
+                    <span class="name">Worker · write</span>
+                    <span class="desc">Applies one writelist entry</span>
+                </div>
+                <div class="row" title={searching.description}>
+                    <svg width="26" height="16"
+                        ><rect
+                            x="1"
+                            y="1"
+                            width="24"
+                            height="14"
+                            rx="4"
+                            fill={searching.fill}
+                            stroke={searching.stroke}
+                            stroke-width="1.5"
+                        /><line x1="2" y1="10" x2="24" y2="10" stroke={WORKER_STYLE.fill} stroke-width="1.6" /></svg
+                    >
+                    <span class="name">{searching.label}</span>
+                    <span class="desc">{searching.description}</span>
+                </div>
+                <div class="row">
+                    <svg width="26" height="16"
+                        ><path
+                            d="M 8 8 l 3 3.2 l 6 -7"
+                            fill="none"
+                            stroke={WORKER_STYLE.check}
+                            stroke-width="1.8"
+                            stroke-linecap="round"
+                            stroke-linejoin="round"
+                        /></svg
+                    >
+                    <span class="name">Searched</span>
+                    <span class="desc">Already searched in this read phase</span>
+                </div>
+                <div class="row">
+                    <svg width="26" height="16"
+                        ><rect
+                            x="1"
+                            y="3"
+                            width="24"
+                            height="10"
+                            rx="5"
+                            fill={WORKER_STYLE.tagFill}
+                            stroke={WORKER_STYLE.tagStroke}
+                        /><text x="13" y="8.5" font-size="8" font-weight="700" fill={WORKER_STYLE.tagText} text-anchor="middle" dominant-baseline="central">+</text></svg
+                    >
+                    <span class="name">Match</span>
+                    <span class="desc">Found by a worker; queued in the writelist</span>
+                </div>
+            {/if}
+
             <div class="group-title">Edges</div>
             <div class="row">
                 <svg width="26" height="16"
@@ -139,6 +230,7 @@
         display: flex;
         flex-direction: column;
         align-items: flex-end;
+        max-height: 100%;
         gap: 6px;
         font-size: 0.75rem;
         color: #334155;
@@ -167,6 +259,8 @@
         padding: 8px 10px 10px;
         box-shadow: 0 8px 24px rgba(15, 23, 42, 0.12);
         width: 290px;
+        min-height: 0;
+        overflow-y: auto;
     }
 
     .group-title {

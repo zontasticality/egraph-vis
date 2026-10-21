@@ -1,5 +1,5 @@
 <script lang="ts">
-    import { currentState } from "../../stores/timelineStore";
+    import { displayState } from "../../stores/timelineStore";
     import { interactionStore } from "../../stores/interactionStore";
     import { getColorForId, getLightColorForId } from "../../utils/colors";
     import { NODE_STYLES } from "../../engine/visualStyles";
@@ -14,7 +14,7 @@
     /** Visual state of the e-node (symbol mode). */
     export let styleClass: NodeStyleClass = NodeStyleClass.Default;
 
-    $: canonicalId = $currentState?.unionFind[id]?.canonical ?? id;
+    $: canonicalId = $displayState?.unionFind[id]?.canonical ?? id;
     $: isCanonical = canonicalId === id;
     $: isSelected = $interactionStore.selection?.nodeIds.has(id) ?? false;
     $: hover = $interactionStore.hover;
